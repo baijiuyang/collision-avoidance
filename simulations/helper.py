@@ -38,7 +38,7 @@ def rate_of_expansion(p0, p1, v0, v1, w, relative=False):
         RE /= 2 * np.arctan(w / (2 * r))
     return RE
     
-def rate_of_bearing(p0, p1, v0):
+def rate_of_bearing(p0, p1, v0, Hz):
     '''
     Calculate the rate of change of bearing angle of p1 in the perspective
     of p0, using Euler method (not analytical). Bearing angle is defined as 
@@ -52,11 +52,11 @@ def rate_of_bearing(p0, p1, v0):
         
     Return:
         (1-d np array of float): An array of rate of change of bearing angle
-            in radians / step. Note that np.diff will make the length
+            in radians / second. Note that np.diff will make the length
             n_Step - 1. Therefore, last value is duplicated to pad to n_step. 
     '''
     b = bearing(p0, p1, v0)
-    return np.append(np.diff(b), np.diff(b)[-1])
+    return np.append(np.diff(b), np.diff(b)[-1]) * Hz
 
 def bearing(p0, p1, v0):
     '''
@@ -155,9 +155,10 @@ def collision_trajectory(bearing, side, spd1=2.0, w=1.5, r=10, Hz=100, animate=F
         interval (int): Delay between frames in milliseconds.
         
     Return:
-        traj0, traj1 (2-d np array): Near-collision trajectories of agent 1 and agent 0 in 
+        traj0, traj1 (2-d np array of float): Near-collision trajectories of agent 1 and agent 0 in 
             meters.
-        v0[1] (float): The speed of agent 0 to achieve near-collision with agent 1.
+        np.tile(v0, (n, 1)), np.tile(v1, (n, 1)) (2-d np array of float): The velocity of agent 0 to 
+            achieve near-collision with agent 1.
     '''
     alpha = (180 - 2 * bearing) * 2 * math.pi / 360 # Central angle of line of sight
     p1 = np.array([-r * np.sin(alpha), -r * np.cos(alpha)])
@@ -205,7 +206,7 @@ def collision_trajectory(bearing, side, spd1=2.0, w=1.5, r=10, Hz=100, animate=F
         # call the animator.  blit=True means only re-draw the parts that have changed.
         anim = animation.FuncAnimation(fig, animate_fast, frames=len(traj0), interval=interval, blit=True)
     
-    return traj0, traj1, v0[1]
+    return traj0, traj1, np.tile(v0, (n, 1)), np.tile(v1, (n, 1))
     
     
     
