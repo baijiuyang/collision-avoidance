@@ -1,47 +1,217 @@
 # This module contains all the helper functions for the dissertation research of Jiuyang Bai
-# on the control law of pedestrian collision avoidance please contact baijiuyang@hotmail.com
+# on the control law of pedestrian collision avoidance, please contact baijiuyang@hotmail.com
 # for support. Github: https://github.com/baijiuyang/collision-avoidance.git
 
 import numpy as np
 from numpy.linalg import norm
-from numpy import sqrt
+from numpy import sqrt, inner, sin, cos, arccos, arcsin, arctan
 import math
 from matplotlib import animation, pyplot as plt
 
-
-def rate_of_expansion(p0, p1, v0, v1, w, relative=False):
+def sp2v(s, phi, ref=[0, 1]):
     '''
-    Calculate the (relative) rate of optical expansion of p1 in the perspective
+    Convert speeds to velocities given phi and reference axis of phi. 
+    
+    Args:
+        s, phi(floats or 1-d np array of floats): Speeds, and headings.
+        ref (2-d vector): The allocentric reference axis that defines phi.
+            Clockwise rotation up to pi is positive, counter-clockwise rotation
+            up to pi is negative. [0, 1] or [1, 0].
+        
+    Return:
+        (2-d vector or np array of floats): Velocities.
+    '''
+    if ref[0] == 0 and ref[1] == 1:
+        v = np.stack((s * sin(phi), s * cos(phi)), axis=-1)
+    elif ref[0] == 1 and ref[1] == 0:
+        v = np.stack((s * cos(phi), s * sin(phi)), axis=-1)
+    if len(v.shape) == 1:
+        v = [v[0], v[1]]
+    return v
+    
+def v2sp(v, ref=[0, 1]):
+    '''
+    Convert velocities to speeds and phi. 
+    
+    Args:
+        v (2-d vector or np array of floats): Velocities.
+        ref (2-d vector): The allocentric reference axis that defines phi.
+            Clockwise rotation up to pi is positive, counter-clockwise rotation
+            up to pi is negative. [0, 1] or [1, 0].
+        
+    Return:
+        s, phi(floats or 1-d np array of floats): Speeds, and headings.
+    '''
+    def _v2sp(v, ref):
+        s = norm(v)
+        if ref[0] == 0 and ref[1] == 1:
+            phi = arcsin(v[0] / s)
+        elif ref[0] == 1 and ref[1] == 0:
+            phi = arcsin(v[1] / s)
+        return s, phi
+        
+    if len(np.shape(v)) == 1:
+        return _v2sp(v, ref)
+    else:
+        s = np.zeros(len(v))
+        phi = np.zeros(len(v))
+        for i in range(len(v)):
+            s[i], phi[i] = _v2sp(v[i], ref)
+        return s, phi
+
+def sp2a(s, d_s, phi, d_phi, ref=[1, 0]):
+    '''
+    Compute vectoral acceleration from d_s, phi, and d_phi.
+    
+    Args:
+        s, phi (floats or 1-d np array of floats): Speed and heading.
+        d_s, d_phi (floats or 1-d np array of floats): Rate of change of speed and phi.
+        ref (2-d vector): The allocentric reference axis that defines phi.
+            Clockwise rotation up to pi is positive, counter-clockwise rotation
+            up to pi is negative. [0, 1] or [1, 0].
+        
+    Return:
+        (2-d vector or np array of floats): Vectoral accelerations.
+    '''
+    if ref[0] == 0 and ref[1] == 1:
+        dd_x = d_s * sin(phi) - s * d_phi * cos(phi)
+        dd_y = d_s * cos(phi) - s * d_phi * sin(phi)
+    elif ref[0] == 1 and ref[1] == 0:
+        dd_x = d_s * cos(phi) - s * d_phi * sin(phi)
+        dd_y = d_s * sin(phi) - s * d_phi * cos(phi)
+    a = np.stack((dd_x, dd_y), axis=-1)
+    if len(a.shape) == 1:
+        a = [a[0], a[1]]
+    return a
+    
+def theta(p0, p1, w):
+    '''
+    Computes the visual angle of p1 in the perspective of p0
+    
+    Args:
+        w (float): The width of p1 in meters.
+        
+    Return:
+        (float or 1-d np array of floats): Theta in radians.
+    '''
+    if len(np.shape(p0)) == 1:
+        r01 = [i - j for i, j in zip(p1, p0)]
+        r = norm(r01)
+    else:
+        r01 = p1 - p0
+        r = norm(r01, axis=1)
+    return 2 * arctan(w / (2 * r))
+    
+def d_theta(p0, p1, v0, v1, w):
+    '''
+    Computes the rate of optical expansion of p1 in the perspective
     of p0. This function assumes symmetrical expansion of p1. 
+    
+    Args:
+        p0, p1 (2-d vectors or np array of float): Time series of positions in meter,
+            with the shape (n_step, 2).
+        v0, v1 (2-d vectors or np array of float): Time series of velocities in meter / second,
+            with the shape (n_step, 2).
+        w (float): The width of the leader in meters.
+        
+    Return:
+        RE (float or 1-d np array of floats): An array of rate of optical expansion
+            in radians / second.
+    '''
+    def _d_theta(p0, p1, v0, v1, w):
+        r01 = [i - j for i, j in zip(p1, p0)] # Vector pointing to agent 1 from agent 0.
+        r10 = [-i for i in r01]
+        r = norm(r01) # Distance between agent 0 and agent 1.
+        # The time derivative of distance is the sum of speed along the signed distance
+        dr = (inner(v0, r01) + inner(v1, r10)) / r
+        RE = -1 * w * dr / (r ** 2 + w ** 2 / 4)
+        return RE
+        
+    if len(np.shape(p0)) == 1:
+        return _d_theta(p0, p1, v0, v1, w)
+    else:
+        RE = np.zeros(len(p0))
+        for i in range(len(RE)):
+            RE[i] = _d_theta(p0[i], p1[i], v0[i], v1[i], w)
+        return RE
+
+def d_theta_numeric(p0, p1, w, Hz):
+    thetas = theta(p0, p1, w)
+    d_thatas = np.diff(thetas)
+    return np.append(d_thatas, d_thatas[-1]) * Hz
+
+def beta(p0, p1, v0):
+    '''
+    Compute beta angle of p1 in the perspective of p0 in radians.
+    Beta angle is defined as the angle between the line of sight and
+    heading direction. beta = phi (heading) - psi (bearing).
     
     Args:
         p0, p1 (2-d np array of float): Time series of positions in meter,
             with the shape (n_step, 2).
-        v0, v1 (2-d np array of float): Time series of velocities in meter / second,
-            with the shape (n_step, 2).
-        w (float): The width of the leader in meters.
-        relative (boolean): Whether compute relative rate of expansion.
+        v0 (2-d np array of float): Time series of velocity of agent 0 
+            in meter / second, with the shape (n_step, 2).
         
     Return:
-        RE (1-d np array of float): An array of (relative) rate of optical expansion
-            in radians / second.
+        (1-d np array of float): Beta angle in radians. [-pi, pi].
+        Positive value means p1 is on the left hand side of p0.
     '''
     r01 = p1 - p0 # Vector pointing to agent 1 from agent 0.
-    r = np.linalg.norm(r01, axis=1) # Distance between agent 0 and agent 1.
-    drdt = np.zeros_like(r) # The time derivative of distance
-    RE = np.zeros_like(r) # Rate of optical expansion
-    for i in range(len(drdt)):
-        # The time derivative of distance is the sum of speed along the signed distance
-        drdt[i] = (np.inner(v0[i], r01[i]) + np.inner(v1[i], -r01[i])) / r[i]
-        RE[i] = w * drdt[i] / (r[i] ** 2 + w ** 2 / 4)
-    if relative:
-        RE /= 2 * np.arctan(w / (2 * r))
-    return RE
-    
-def rate_of_bearing(p0, p1, v0, Hz):
+    if len(np.shape(r01)) == 1:
+        v0 = np.expand_dims(v0, axis=0)
+        v1 = np.expand_dims(v1, axis=0)
+        r01 = np.expand_dims(r01, axis=0)
+        beta = np.expand_dims(beta, axis=0)
+    r = norm(r01, axis=1) # Distance between agent 0 and agent 1.
+    s0 = norm(v0, axis=1)# The speed of agent 0.
+    beta = np.zeros_like(r)
+    for i in range(len(beta)):
+        beta[i] = arccos(inner(v0[i], r01[i]) / (s0[i] * r[i]))
+        # Decide the side of agent 1 on agent 0. Rotate v0 90 degree clockwise 
+        # v0' = (y, -x) if the sign of its dot product with r01 is negative, 
+        # agent 1 is on the right side of agent 0. Vice versa.
+        if v0[i, 1] * r01[i, 0] - v0[i, 0] * r01[i, 1] > 0: 
+            beta[i] = -beta[i]
+    return beta
+
+def d_beta(beta, p0, p1, v0, v1, a0):
     '''
-    Calculate the rate of change of bearing angle of p1 in the perspective
-    of p0, using Euler method (not analytical). Bearing angle is defined as 
+    Compute the analytical solution the rate of change of beta angle of p1 
+    in the perspective of p0. Beta angle is defined as the angle between 
+    the line of sight and heading direction. beta = phi - psi.
+    
+    Args:
+        p0, p1 (2-d np array of float): Time series of positions in meter,
+            with the shape (n_step, 2).
+        v0, v1 (2-d np array of float): Time series of velocities 
+            in meter / second, with the shape (n_step, 2).
+        a0, (2-d np array of float): Time series of accelerations of agent 0
+            in meter / second^2, with the shape (n_step, 2).
+        
+    Return:
+        d_beta (1-d np array of float): An array of rate of change of beta 
+            angle in radians / second.
+    '''
+    def _d_beta(beta, p0, p1, v0, v1, a0)
+    r01 = p1 - p0 # Distance between 0 and 1
+    if len(np.shape(r01)) == 1:
+        v0 = np.expand_dims(v0, axis=0)
+        v1 = np.expand_dims(v1, axis=0)
+        r01 = np.expand_dims(r01, axis=0)
+        beta = np.expand_dims(beta, axis=0)
+    v01 = v1 - v0 # Relative velocity
+    d_beta = np.zeros_like(p0)
+    # The analytical solution beta dot
+    for i in range(len(r01)):
+        numerator = inner(v01[i], v0[i]) + inner(r01[i], a0[i]) - cos(beta[i]) * (norm(v01[i]) * norm(v0[i]) + norm(r01[i]) * norm(a0[i]))
+        denominator = abs(sin(beta[i])) * norm(r01[i]) * norm(v0[i])
+        d_beta[i] = numerator / denominator
+    return d_beta
+    
+def d_beta_numeric(p0, p1, v0, Hz):
+    '''
+    Compute the rate of change of beta angle of p1 in the perspective
+    of p0, using Euler method (not analytical). beta angle is defined as 
     the angle between the line of sight and heading direction.
     
     Args:
@@ -51,35 +221,32 @@ def rate_of_bearing(p0, p1, v0, Hz):
             in meter / second, with the shape (n_step, 2).
         
     Return:
-        (1-d np array of float): An array of rate of change of bearing angle
-            in radians / second. Note that np.diff will make the length
+        d_beta (1-d np array of float): An array of rate of change of beta 
+            angle in radians / second. Note that np.diff will make the length
             n_Step - 1. Therefore, last value is duplicated to pad to n_step. 
     '''
-    b = bearing(p0, p1, v0)
-    return np.append(np.diff(b), np.diff(b)[-1]) * Hz
+    b = beta(p0, p1, v0)
+    d_beta = np.append(np.diff(b), np.diff(b)[-1]) * Hz
+    i = np.where(np.absolute(d_beta) > 100)
+    # Correct for the change of sign of beta angle
+    if d_beta[i] < 0:
+        d_beta[i] += 2 * math.pi * Hz
+    elif d_beta[i] > 0:
+        d_beta[i] -= 2 * math.pi * Hz
+    return d_beta
 
-def bearing(p0, p1, v0):
-    '''
-    Calculate bearing angle of p1 in the perspective of p0 in radians.
-    Bearing angle is defined as the angle between the line of sight and
-    heading direction.
+
+def psi(p0, p1, ref=[0,1]):
+    pass
     
-    Args:
-        p0, p1 (2-d np array of float): Time series of positions in meter,
-            with the shape (n_step, 2).
-        v0 (2-d np array of float): Time series of velocity of agent 0 
-            in meter / second, with the shape (n_step, 2).
-        
-    Return:
-        (1-d np array of float): Bearing angle in radians.
-    '''
-    r01 = p1 - p0 # Vector pointing to agent 1 from agent 0.
-    r = np.linalg.norm(r01, axis=1) # Distance between agent 0 and agent 1.
-    s0 = np.linalg.norm(v0, axis=1)# The speed of agent 0.
-    bearing = np.zeros_like(r)
-    for i in range(len(bearing)):
-        bearing[i] = np.arccos(np.inner(v0[i], r01[i]) / (s0[i] * r[i]))
-    return bearing
+def d_psi(p1, v0, v1, R=[0, 1]):
+    r01 = p1 - p0
+    v01 = v1 - v0
+    
+def d_psi_numeric(p1, v0, v1, R=[0, 1]):
+    r01 = p1 - p0
+    v01 = v1 - v0 
+    
 
 def simple_gaussian(x, a=2, b=0.1):
     '''
@@ -130,22 +297,24 @@ def minimum_separation(p0, p1, v0, v1):
     if v0[0] == v1[0] and v0[1] == v1[1]:
         return norm(p01), 0
     v10 = np.array(v0) - np.array(v1)
-    dca = np.sqrt(1 - (np.inner(p01, v10) / (norm(p01) * norm(v10))) ** 2) * norm(p01)
-    ttca = np.inner(p01, v10) / norm(v10) ** 2 # np.inner takes care of the sign
-    if np.inner(np.array(v1), np.array(p0) - np.array(p1) + v10 * ttca) < 0: # Check passing order
+    dca = np.sqrt(1 - (inner(p01, v10) / (norm(p01) * norm(v10))) ** 2) * norm(p01)
+    ttca = inner(p01, v10) / norm(v10) ** 2 # np.inner takes care of the sign
+    if inner(np.array(v1), np.array(p0) - np.array(p1) + v10 * ttca) < 0: # Check passing order
         dca *= -1
     return dca, ttca
-
     
-def collision_trajectory(bearing, side, spd1=2.0, w=1.5, r=10, Hz=100, animate=False, interval=None):
+    
+    
+def collision_trajectory(beta, side, spd1=2.0, w=1.5, r=10, Hz=100, animate=False, interval=None):
     '''
     This function produces near-collision trajectories of circular agents 0 and 1 with 
-    a defined bearing angle. The speed of agent 1 is constant. The speed of agent 0 will 
+    a defined beta angle. The speed of agent 1 is constant. The speed of agent 0 will 
     vary to guarantee near-collision. 
     
     Args:
-        bearing ((-90,90), float): The initial bearing angle between A and B in degree. Bearing 
-            angle is defined as the angle between the line of sight and heading direction.        
+        beta ((-90,90), float): The initial beta angle between A and B in degree. beta 
+            angle is defined as the angle between the line of sight and heading direction. obstacles
+            on the left have positive betas, obstacles on the right have negative betas.
         side (char): Agent 0 pass in front ('f'), or from behind ('b') agent 1. 
         spd1 (float): The speed of agent 1 in meter/second.
         w (float): The diameter of both agents in meters.
@@ -160,14 +329,14 @@ def collision_trajectory(bearing, side, spd1=2.0, w=1.5, r=10, Hz=100, animate=F
         np.tile(v0, (n, 1)), np.tile(v1, (n, 1)) (2-d np array of float): The velocity of agent 0 to 
             achieve near-collision with agent 1.
     '''
-    alpha = (180 - 2 * bearing) * 2 * math.pi / 360 # Central angle of line of sight
-    p1 = np.array([-r * np.sin(alpha), -r * np.cos(alpha)])
+    alpha = (180 - 2 * beta) * 2 * math.pi / 360 # Central angle of line of sight
+    p1 = np.array([-r * sin(alpha), -r * cos(alpha)])
     p0 = np.array([0, -r])
     p01 = p1 - p0
-    v1 = np.array([spd1 * np.sin(alpha), spd1 * np.cos(alpha)])
-    a = r ** 2 * np.sin(alpha) ** 2 - w ** 2
-    b = -2 * spd1 * (np.cos(alpha) * (norm(p01) ** 2 - w ** 2) + r ** 2 * (1 - np.cos(alpha)) ** 2)
-    c = spd1 ** 2 * (norm(p01) ** 2 - w ** 2 - r ** 2 * (1 - np.cos(alpha)) ** 2)
+    v1 = np.array([spd1 * sin(alpha), spd1 * cos(alpha)])
+    a = r ** 2 * sin(alpha) ** 2 - w ** 2
+    b = -2 * spd1 * (cos(alpha) * (norm(p01) ** 2 - w ** 2) + r ** 2 * (1 - cos(alpha)) ** 2)
+    c = spd1 ** 2 * (norm(p01) ** 2 - w ** 2 - r ** 2 * (1 - cos(alpha)) ** 2)
     d = (b ** 2) - (4 * a * c)
 
     # find two solutions
@@ -190,7 +359,7 @@ def collision_trajectory(bearing, side, spd1=2.0, w=1.5, r=10, Hz=100, animate=F
         fig = plt.figure(figsize=(7, 7))
         ax = plt.axes(xlim=(-12, 12), ylim=(-12, 12))
         angles = np.linspace(0, 2 * math.pi, num=12)
-        circle = np.stack((w / 2 * np.cos(angles), w / 2 * np.sin(angles)), axis=-1)
+        circle = np.stack((w / 2 * cos(angles), w / 2 * sin(angles)), axis=-1)
         agent0, = ax.plot(traj0[0, 0] + circle[:, 0], traj0[0, 1] + circle[:, 1], 'b')
         agent1, = ax.plot(traj1[0, 0] + circle[:, 0], traj1[0, 1] + circle[:, 1], 'r')
         def animate_fast(i):
