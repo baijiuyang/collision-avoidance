@@ -16,7 +16,8 @@ class Simulation:
     
     Fields:
         t (list of floats): Time stamps in seconds.
-        p, v, a ({agent.id: 2-d list of float}): Time series of positions, velocities, accelerations.
+        p, v, a, phi, d_phi, dd_phi, d_s ({agent.id: 2-d list of float}): Time series of positions, velocities, accelerations,
+            heading, 1st order d of heading, 2nd order d of heading, 1st order d of speed.
         agents (Object of Agent class): See definition in Agent class.
         Hz (int): Temporal frequency of the simulation.
     '''
@@ -25,6 +26,10 @@ class Simulation:
         self.p = {}
         self.v = {}
         self.a = {}
+        self.phi = {}
+        self.d_phi = {}
+        self.dd_phi = {}
+        self.d_s = {}        
         self.agents = {}
         self.add_agents(agents)
         self.Hz = Hz
@@ -34,6 +39,11 @@ class Simulation:
         self.p[agent.id] = [agent.p[:]]
         self.v[agent.id] = [agent.v[:]]
         self.a[agent.id] = [agent.a[:]]
+        self.phi[agent.id] = [agent.phi]
+        self.d_phi[agent.id] = [agent.d_phi]
+        self.dd_phi[agent.id] = [agent.dd_phi]
+        self.d_s[agent.id] = [agent.d_s]
+        
         
     def add_agents(self, agents):
         for agent in agents:
@@ -42,9 +52,22 @@ class Simulation:
     def update(self, Hz=None):
         if not Hz: Hz = self.Hz
         # Parallel update: 1. Computing without updating, 2. Updating
-        # Compute
+        # Compute  
+        p_old, v_old = {}, {}
+        for i, p in self.p.items():
+            if len(self.t) == 1:
+                p_old[i] = p[-1]
+            else:
+                p_old[i] = p[-2]
+        for i, v in self.v.items():
+            if len(self.t) == 1:
+                v_old[i] = v[-1]
+            else:
+                v_old[i] = v[-2]
+        # print('p_old = ', p_old)
+        # print('v_old = ', v_old)
         for agent in self.agents.values():
-            agent.interact(self.agents.values())
+            agent.interact(self.agents.values(), p_old, v_old, Hz)
 
         # Update
         for agent in self.agents.values():
@@ -54,6 +77,10 @@ class Simulation:
             self.p[agent.id].append(agent.p[:])
             self.v[agent.id].append(agent.v[:])
             self.a[agent.id].append(agent.a[:])
+            self.phi[agent.id].append(agent.phi)
+            self.d_phi[agent.id].append(agent.d_phi)
+            self.dd_phi[agent.id].append(agent.dd_phi)
+            self.d_s[agent.id].append(agent.d_s)
         
     def simulate(self, t_total, Hz=None):
         if not Hz: Hz = self.Hz
@@ -92,6 +119,9 @@ class Agent:
         '''
         This constructor initialize an agent (1) through vectoral velocity and acceleration or
         (2) through speed, phi (orientation given ref as the allocentric reference axis), d_phi
+        
+        Args:
+            model_args (dict): {'arg_name': arg value}.
         '''
         self.id = id
         self.goal_id = goal_id
@@ -111,7 +141,7 @@ class Agent:
         self.d_s_next = 0
         self.dd_phi_next = 0
         for name, args in zip(model_names, model_args):
-            self.models[name] = Model(name, args)
+            self.models[name] = Model(name, args, self.ref)
         if v0 == None:
             self.sp2av()
         else:
@@ -127,7 +157,7 @@ class Agent:
             phi = 0
         self.s, self.phi = s, phi
     
-    def interact_pairwise(self, source):
+    def interact_pairwise(self, source, p0_old, p1_old, v0_old, v1_old, Hz):
         '''
         Computes the tangential acceleration (d_s) and rotational acceleration (dd_phi)
         caused by one source based on the models.
@@ -147,7 +177,6 @@ class Agent:
         if source.id == self.id or self.constant: 
             return d_s, dd_phi
         
-        p1, v1 = source.p, source.v
         source_type = ''
         if source.id == self.goal_id:
             source_type += 'g' # goal
@@ -156,22 +185,29 @@ class Agent:
             
         # Combine the influences of all models
         for model in self.models.values():
-            _d_s, _dd_phi = model(p1, v1, source_type)
+            _d_s, _dd_phi = model(self, source, source_type, p0_old, p1_old, v0_old, v1_old, Hz)
             d_s += _d_s
             dd_phi += _dd_phi
         return d_s, dd_phi
         
-    def interact(self, sources):
+    def interact(self, sources, p_old, v_old, Hz):
         '''
         Combine the influences from all sources.
+        
+        Args:
+            sources (Agent object): Source of influence.
+            p_old, v_old (dict): {agent_id: position of last frame}, {agent_id: velocity of last frame}.
         '''
         if self.constant: return
         # Pre-allocation of return variables
         d_s, dd_phi = 0, 0
-        
+        p0_old = p_old[self.id]
+        v0_old = v_old[self.id]
         # Combine the influence of all sources
         for source in sources:
-            _d_s, _dd_phi = self.interact_pairwise(source)
+            p1_old = p_old[source.id]
+            v1_old = v_old[source.id]
+            _d_s, _dd_phi = self.interact_pairwise(source, p0_old, p1_old, v0_old, v1_old, Hz)
             d_s += _d_s
             dd_phi += _dd_phi
         self.d_s_next, self.dd_phi_next = d_s, dd_phi

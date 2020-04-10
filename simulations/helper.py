@@ -8,46 +8,99 @@ from numpy import sqrt, inner, sin, cos, arccos, arcsin, arctan
 import math
 from matplotlib import animation, pyplot as plt
 
+def dist(p0, p1):
+    if len(np.shape(p0)) == 1:
+        return norm([i - j for i, j in zip(p1, p0)])
+    else:
+        return norm(p1 - p0, axis=1)
+    
+def d_dist(p0, p1, v0, v1):
+    '''
+    Computes the derivative of distance as a scaler.
+    '''
+    if len(np.shape(p0)) == 1:
+        return (v1[0] - v0[0] + v1[1] - v0[1]) / dist(p0, p1)
+    else:
+        return (v1[:, 0] - v0[:, 0] + v1[:, 1] - v0[:, 1]) / dist(p0, p1)
+    
+def d_speed(v, a):
+    '''
+    Computes the derivative of speed as a scaler.
+    '''
+    if len(np.shape(v)) == 1:
+        return (a[0] + a[1]) / norm(v)
+    else:
+        return (a[:, 0] + a[:, 1]) / norm(v, axis=1)
+
+def rotate(vec, angle):
+    '''
+    Rotate vector 'vec' clockwise 'angle' radians.
+    
+    Args:
+        vec (2-d vector or np array of 2-d vectors): The vector to be rotated.
+        angle (float or np array of floats): The angle of rotation in radian.
+    
+    Return:
+        (2-d vector or np array of 2-d vectors): The rotated vector.
+    '''
+    def _rotate(vec, angle):
+        # Rotation matrix
+        M = [[cos(angle), -sin(angle)], [sin(angle), cos(angle)]]
+        return np.matmul(vec, M)
+    # When only one angle
+    if len(np.shape(angle)) == 0:
+        return _rotate(vec, angle)
+    # When there are multiple angles
+    else:
+        vecs = np.zeros((len(angle), 2))
+        # When only one vector
+        if len(np.shape(vec)) == 1:
+            for i in range(len(vecs)):
+                vecs[i] = _rotate(vec, angle[i])
+        # When there are multiple vectors
+        elif len(vec) == len(angle):
+            for i in range(len(vecs)):
+                vecs[i] = _rotate(vec[i], angle[i])
+        else:
+            raise Exception('Arguments length do not match')
+        return vecs
+        
 def sp2v(s, phi, ref=[0, 1]):
     '''
     Convert speeds to velocities given phi and reference axis of phi. 
     
     Args:
-        s, phi(floats or 1-d np array of floats): Speeds, and headings.
+        s, phi(floats or np array of floats): Speeds, and headings.
         ref (2-d vector): The allocentric reference axis that defines phi.
             Clockwise rotation up to pi is positive, counter-clockwise rotation
-            up to pi is negative. [0, 1] or [1, 0].
+            up to pi is negative.
         
     Return:
-        (2-d vector or np array of floats): Velocities.
+        (2-d vector or np array of 2-d vectors): Velocities.
     '''
-    if ref[0] == 0 and ref[1] == 1:
-        v = np.stack((s * sin(phi), s * cos(phi)), axis=-1)
-    elif ref[0] == 1 and ref[1] == 0:
-        v = np.stack((s * cos(phi), s * sin(phi)), axis=-1)
-    if len(v.shape) == 1:
-        v = [v[0], v[1]]
-    return v
+    ref = [i / norm(ref) for i in ref]
+    return rotate(ref, phi) * np.expand_dims(s, axis=-1)
     
 def v2sp(v, ref=[0, 1]):
     '''
     Convert velocities to speeds and phi. 
     
     Args:
-        v (2-d vector or np array of floats): Velocities.
+        v (2-d vector or np array of 2-d vectors): Velocities.
         ref (2-d vector): The allocentric reference axis that defines phi.
             Clockwise rotation up to pi is positive, counter-clockwise rotation
             up to pi is negative. [0, 1] or [1, 0].
         
     Return:
-        s, phi(floats or 1-d np array of floats): Speeds, and headings.
+        s, phi(floats or np array of floats): Speeds, and headings.
     '''
+    ref = [i / norm(ref) for i in ref]
     def _v2sp(v, ref):
         s = norm(v)
-        if ref[0] == 0 and ref[1] == 1:
-            phi = arcsin(v[0] / s)
-        elif ref[0] == 1 and ref[1] == 0:
-            phi = arcsin(v[1] / s)
+        phi = arccos(inner(v, ref) / s)
+        # Phi is negative when it's on the left side of ref
+        if ref[1] * v[0] - ref[0] * v[1] < 0:
+            phi = -phi
         return s, phi
         
     if len(np.shape(v)) == 1:
@@ -57,33 +110,37 @@ def v2sp(v, ref=[0, 1]):
         phis = np.zeros(len(v))
         for i in range(len(v)):
             ss[i], phis[i] = _v2sp(v[i], ref)
-        return ss, phis
+        return np.stack((ss, phis), axis=-1)
 
-def sp2a(s, d_s, phi, d_phi, ref=[1, 0]):
+def sp2a(s, d_s, phi, d_phi, ref=[0, 1]):
     '''
     Compute vectoral acceleration from d_s, phi, and d_phi.
     
     Args:
-        s, phi (floats or 1-d np array of floats): Speed and heading.
-        d_s, d_phi (floats or 1-d np array of floats): Rate of change of speed and phi.
+        s, phi (floats or np array of floats): Speed and heading.
+        d_s, d_phi (floats or np array of floats): Rate of change of speed and phi.
         ref (2-d vector): The allocentric reference axis that defines phi.
             Clockwise rotation up to pi is positive, counter-clockwise rotation
-            up to pi is negative. [0, 1] or [1, 0].
+            up to pi is negative.
         
     Return:
-        (2-d vector or np array of floats): Vectoral accelerations.
+        (2-d vector or np array of 2-d vectors): Vectoral accelerations.
     '''
-    if ref[0] == 0 and ref[1] == 1:
-        dd_x = d_s * sin(phi) - s * d_phi * cos(phi)
-        dd_y = d_s * cos(phi) - s * d_phi * sin(phi)
-    elif ref[0] == 1 and ref[1] == 0:
-        dd_x = d_s * cos(phi) - s * d_phi * sin(phi)
-        dd_y = d_s * sin(phi) - s * d_phi * cos(phi)
-    a = np.stack((dd_x, dd_y), axis=-1)
-    if len(a.shape) == 1:
-        a = [a[0], a[1]]
-    return a
-    
+    ref = [i / norm(ref) for i in ref]
+    def _sp2a(s, d_s, phi, d_phi, ref):
+        ori = rotate(ref, phi)
+        _, phi = v2sp(ori, ref=[0, 1])
+        dd_x = d_s * sin(phi) + s * cos(phi) * d_phi
+        dd_y = d_s * cos(phi) - s * sin(phi) * d_phi
+        return [dd_x, dd_y]
+    if len(np.shape(s)) == 0:
+        return _sp2a(s, d_s, phi, d_phi, ref)
+    else:
+        accs = np.zeros((len(s), 2))
+        for i in range(len(accs)):
+            accs[i] = _sp2a(s[i], d_s[i], phi[i], d_phi[i], ref)
+        return accs
+   
 def theta(p0, p1, w):
     '''
     Computes the visual angle of p1 in the perspective of p0
@@ -92,13 +149,13 @@ def theta(p0, p1, w):
         w (float): The width of p1 in meters.
         
     Return:
-        (float or 1-d np array of floats): Theta in radians.
+        (float or np array of floats): Theta in radians.
     '''
     if len(np.shape(p0)) == 1:
         r01 = [i - j for i, j in zip(p1, p0)]
         r = norm(r01)
     else:
-        r01 = p1 - p0
+        r01 = np.array(p1) - np.array(p0)
         r = norm(r01, axis=1)
     return 2 * arctan(w / (2 * r))
     
@@ -115,7 +172,7 @@ def d_theta(p0, p1, v0, v1, w):
         w (float): The width of the leader in meters.
         
     Return:
-        RE (float or 1-d np array of floats): An array of rate of optical expansion
+        RE (float or np array of floats): An array of rate of optical expansion
             in radians / second.
     '''
     def _d_theta(p0, p1, v0, v1, w):
@@ -124,7 +181,7 @@ def d_theta(p0, p1, v0, v1, w):
         r = norm(r01) # Distance between agent 0 and agent 1.
         # The time derivative of distance is the sum of speed along the signed distance
         dr = (inner(v0, r01) + inner(v1, r10)) / r
-        RE = -1 * w * dr / (r ** 2 + w ** 2 / 4)
+        RE = 1 * w * dr / (r ** 2 + w ** 2 / 4)
         return RE
         
     if len(np.shape(p0)) == 1:
@@ -147,13 +204,13 @@ def beta(p0, p1, v0):
     heading direction. beta = phi (heading) - psi (bearing).
     
     Args:
-        p0, p1 (2-d vector or np array of floats): Time series of positions in meter,
+        p0, p1 (2-d vector or np array of 2-d vectors): Time series of positions in meter,
             with the shape (n_step, 2).
         v0 (2-d vector ot np array of floats): Time series of velocity of agent 0 
             in meter / second, with the shape (n_step, 2).
         
     Return:
-        (float or 1-d np array of floats): Beta angle in radians. [-pi, pi].
+        (float or np array of floats): Beta angle in radians. [-pi, pi].
         Positive value means p1 is on the left hand side of p0.
     '''
     def _beta(p0, p1, v0):
@@ -176,7 +233,7 @@ def beta(p0, p1, v0):
             betas[i] = _beta(p0[i], p1[i], v0[i])
         return betas
 
-def d_beta(beta, p0, p1, v0, v1, a0):
+def d_beta(p0, p1, v0, v1, a0):
     '''
     Compute the analytical solution the rate of change of beta angle of p1 
     in the perspective of p0. Beta angle is defined as the angle between 
@@ -187,29 +244,33 @@ def d_beta(beta, p0, p1, v0, v1, a0):
             with the shape (n_step, 2).
         v0, v1 (2-d vectors or np array of floats): Time series of velocities 
             in meter / second, with the shape (n_step, 2).
-        a0, (2-d vector or np array of floats): Time series of accelerations of agent 0
+        a0, (2-d vector or np array of 2-d vectors): Time series of accelerations of agent 0
             in meter / second^2, with the shape (n_step, 2).
         
     Return:
-        d_beta (float or 1-d np array of floats): An array of rate of change of beta 
+        d_beta (float or np array of floats): An array of rate of change of beta 
             angle in radians / second.
     '''
-    def _d_beta(beta, p0, p1, v0, v1, a0):
+    
+    def _d_beta(p0, p1, v0, v1, a0):
+        b = beta(p0, p1, v0)
         r01 = [i - j for i, j in zip(p1, p0)] # Distance between 0 and 1
         v01 = v1 - v0 # Relative velocity
-        numerator = inner(v01, v0) + inner(r01, a0) - cos(abs(beta)) * (norm(v01) * norm(v0) + norm(r01) * norm(a0))
-        denominator = abs(sin(abs(beta))) * norm(r01) * norm(v0)
-        if beta > 0:
+        numerator = inner(v01, v0) + inner(r01, a0) - cos(abs(b)) * (d_dist(p0, p1, v0, v1) * norm(v0) + norm(r01) * d_speed(v0, a0))
+        denominator = -abs(sin(abs(b))) * norm(r01) * norm(v0)
+        if abs(denominator - 0) < 1E-9:
+            return None
+        if b > 0:
             return numerator / denominator
         else:
             return - numerator / denominator
         
-    if len(np.shape(beta)) == 0:
-        return _d_beta(beta, p0, p1, v0, v1, a0)
+    if len(np.shape(p0)) == 1:
+        return _d_beta(p0, p1, v0, v1, a0)
     else:
-        d_betas = np.zeros(len(beta))
+        d_betas = np.zeros(len(p0))
         for i in range(len(d_betas)):
-            d_betas[i] = _d_beta(beta[i], p0[i], p1[i], v0[i], v1[i], a0[i])
+            d_betas[i] = _d_beta(p0[i], p1[i], v0[i], v1[i], a0[i])
         return d_betas
     
 def d_beta_numeric(p0, p1, v0, Hz):
@@ -225,18 +286,19 @@ def d_beta_numeric(p0, p1, v0, Hz):
             in meter / second, with the shape (n_step, 2).
         
     Return:
-        d_betas (1-d np array of float): An array of rate of change of beta 
+        d_betas (np array of float): An array of rate of change of beta 
             angle in radians / second. Note that np.diff will make the length
             n_Step - 1. Therefore, last value is duplicated to pad to n_step. 
     '''
     betas = beta(p0, p1, v0)
     d_betas = np.append(np.diff(betas), np.diff(betas)[-1])
-    i = np.where(np.absolute(d_betas) > math.pi) # When beta switch sign around pi
+    indices = np.where(np.absolute(d_betas) > math.pi) # When beta switch sign around pi
     # Correct for the change of sign of beta angle
-    if d_betas[i] < 0:
-        d_betas[i] += 2 * math.pi
-    elif d_betas[i] > 0:
-        d_betas[i] -= 2 * math.pi
+    for i in indices[0]:
+        if d_betas[i] < 0:
+            d_betas[i] += 2 * math.pi
+        elif d_betas[i] > 0:
+            d_betas[i] -= 2 * math.pi
     return d_betas * Hz
 
 
@@ -245,17 +307,20 @@ def psi(p0, p1, ref=[0,1]):
     Computes the angle between line of sight between p0 and p1 and ref. 
     
     Args:
-        p0, p1 (2-d vector or np array of floats): Positions of agent 0 and agent 1.
+        p0, p1 (2-d vector or np array of 2-d vectors): Positions of agent 0 and agent 1.
         ref (2-d vector): The allocentric reference axis. [0, 1] or [1, 0].
         
     Return:
-        (float or 1-d np array of floats): Psi in (-pi, pi). Positive means clockwise
+        (float or np array of floats): Psi in (-pi, pi). Positive means clockwise
             rotation from ref up to pi.
     '''
+    ref = [i / norm(ref) for i in ref]
     def _psi(p0, p1, ref):
+        
         r01 = [i - j for i, j in zip(p1, p0)]
         angle = arccos(inner(r01, ref) / norm(r01))
-        if r01[1] * ref[0] - r01[0] * ref[1] < 0:
+        # Psi is negative when it's on the left side of ref
+        if ref[1] * r01[0] - ref[0] * r01[1] < 0:
             angle = -angle
         return angle
     if len(np.shape(p0)) == 1:
@@ -266,35 +331,38 @@ def psi(p0, p1, ref=[0,1]):
             psis[i] = _psi(p0[i], p1[i], ref)
         return psis
     
-def d_psi(psi, p0, p1, v0, v1, ref=[0, 1]):
+def d_psi(p0, p1, v0, v1, ref=[0, 1]):
     '''
     Computes the analytical solutions of rate of change of psi angle, which is
     the angle between line of sight and ref (an allocentric reference axis). 
     
     Args:
-        psi (float or 1-d np array of floats): The angle between line of sight and ref.
-        p0, p1 (2-d vector or np array of floats): Positions of agent 0 and 1.
-        v0, v1 (2-d vector or np array of floats): Velocities of agent 0 and 1.
+        psi (float or np array of floats): The angle between line of sight and ref.
+        p0, p1 (2-d vector or np array of 2-d vectors): Positions of agent 0 and 1.
+        v0, v1 (2-d vector or np array of 2-d vectors): Velocities of agent 0 and 1.
         ref (2-d vector): The allocentric reference axis. [0, 1] or [1, 0].
     
     Return:
-        (float or 1-d np array of floats): Rate of change of psi.
+        (float or np array of floats): Rate of change of psi.
     '''
-    def _d_psi(psi, p0, p1, v0, v1, ref):
+    ref = [i / norm(ref) for i in ref]
+    def _d_psi(p0, p1, v0, v1, ref):
+        psi_ = psi(p0, p1, ref)
         r01 = [i - j for i, j in zip(p1, p0)]
         v01 = [i - j for i, j in zip(v1, v0)]
-        numerator = inner(v01, ref) - cos(abs(psi)) * norm(v01)
-        denominator = abs(sin(abs(psi))) * norm(r01)
-        if psi > 0:
+        sign_v = np.sign(inner(v01, r01))
+        numerator = -inner(v01, ref) + cos(abs(psi_)) * sign_v * norm(v01)
+        denominator = abs(sin(abs(psi_))) * norm(r01)
+        if psi_ > 0:
             return numerator / denominator
         else:
             return - numerator / denominator 
-    if len(np.shape(psi)) == 0:
-        return _d_psi(psi, p0, p1, v0, v1, ref)
+    if len(np.shape(p0)) == 1:
+        return _d_psi(p0, p1, v0, v1, ref)
     else:
-        d_psis = np.zeros(len(psi))
+        d_psis = np.zeros(len(p0))
         for i in range(len(d_psis)):
-            d_psis[i] = _d_psi(psi[i], p0[i], p1[i], v0[i], v1[i], ref)
+            d_psis[i] = _d_psi(p0[i], p1[i], v0[i], v1[i], ref)
         return d_psis
     
 def d_psi_numeric(p0, p1, Hz, ref=[0, 1]):
@@ -303,12 +371,12 @@ def d_psi_numeric(p0, p1, Hz, ref=[0, 1]):
     of which depends on Hz.
     
     Args:
-        p0, p1 (2-d vector or np array of floats): Positions of agent 0 and 1.
+        p0, p1 (2-d vector or np array of 2-d vectors): Positions of agent 0 and 1.
         Hz (int): Frequency of simulation.
-        ref (2-d vector): The allocentric reference axis. [0, 1] or [1, 0].
+        ref (2-d vector): The allocentric reference axis.
     
     Return:
-        (1-d np array of floats): Rate of change of psi.
+        (np array of floats): Rate of change of psi.
     '''
     psis = psi(p0, p1, Hz, ref)
     d_psis = np.diff(psis)
@@ -320,17 +388,32 @@ def d_psi_numeric(p0, p1, Hz, ref=[0, 1]):
         d_psis[i] += 2 * math.pi
     return d_psis * Hz
     
-
+def phi(v, ref=[0, 1]):
+    '''
+    Computes the heading direction in terms of a reference axis.
+    
+    Args:
+        v (2-d vector or np array of 2-d vectors): Velocity.
+        ref (2-d vector): The allocentric reference axis.
+    Return:
+        (float or np array of floats): Heading direction in range (-pi, pi).
+            Positive heading is clockwise rotation from ref.
+    '''
+    if len(np.shape(v)) == 1:
+        return v2sp(v, ref)[1]
+    else:
+        return v2sp(v, ref)[:, 1]
+    
 def simple_gaussian(x, a=2, b=0.1):
     '''
     Probability Density Function (pdf) of Gussian distribution.
     
     Args:
-        x (1-d np array of float): x in pdf.
+        x (np array of float): x in pdf.
         a, b (float): Parameters of the pdf.
         
     Return:
-        (1-d np array of float): y in pdf
+        (np array of float): y in pdf
     '''
     return np.exp(-x ** 2 / a) / b
     
@@ -341,11 +424,11 @@ def broken_sigmoid(x, a=1, b=20):
     when x < 0. It is symmetrical about the y-axis.
     
     Args:
-        x (1-d np array of float): Input of the function.
+        x (np array of float): Input of the function.
         a, b (float): Parameters of the function.
         
     Return:
-        (1-d np array of float): Output of the function
+        (np array of float): Output of the function
     '''
     return b / (1 + np.exp(np.absolute(x / a)))
 
