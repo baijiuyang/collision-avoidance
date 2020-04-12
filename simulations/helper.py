@@ -456,7 +456,7 @@ def minimum_separation(p0, p1, v0, v1):
     dca = np.sqrt(1 - (inner(p01, v10) / (norm(p01) * norm(v10))) ** 2) * norm(p01)
     ttca = inner(p01, v10) / norm(v10) ** 2 # np.inner takes care of the sign
     if inner(np.array(v1), np.array(p0) - np.array(p1) + v10 * ttca) < 0: # Check passing order
-        dca *= -1
+        dca = -dca
     return dca, ttca
     
     
@@ -520,10 +520,9 @@ def collision_trajectory(beta, side, spd1=2.0, w=1.5, r=10, Hz=100, animate=Fals
         agent1, = ax.plot(traj1[0, 0] + circle[:, 0], traj1[0, 1] + circle[:, 1], 'r')
         def animate_fast(i):
             '''
-                Fast animation function update without clear. Good for
-                watching in real time, but will leave trace if saved.
+            Fast animation function update without clear. Good for
+            watching in real time, but will leave trace if saved.
             '''
-            # ms is the short for markersize
             agent0.set_data(traj0[i, 0] + circle[:, 0], traj0[i, 1] + circle[:, 1])
             agent1.set_data(traj1[i, 0] + circle[:, 0], traj1[i, 1] + circle[:, 1])
 

@@ -5,9 +5,11 @@
 import numpy as np
 from numpy.linalg import norm
 from helper import sp2v, v2sp, sp2a
-from numpy import sqrt
+from numpy import sqrt, sin, cos
 from models import Model
-
+import time
+from matplotlib import animation, pyplot as plt
+import math
 
 
 class Simulation:
@@ -70,10 +72,10 @@ class Simulation:
             agent.interact(self.agents.values(), p_old, v_old, Hz)
 
         # Update
+        self.t.append(self.t[-1] + 1.0 / Hz)
         for agent in self.agents.values():
             agent.move(Hz)
             # Record new states
-            self.t.append(self.t[-1] + 1.0 / Hz)
             self.p[agent.id].append(agent.p[:])
             self.v[agent.id].append(agent.v[:])
             self.a[agent.id].append(agent.a[:])
@@ -85,11 +87,81 @@ class Simulation:
     def simulate(self, t_total, Hz=None):
         if not Hz: Hz = self.Hz
         # Run update t_total * Hz times
-        for i in range(int(t_total * Hz)):
+        for i in range(int(t_total * Hz) - 1):
             self.update(Hz=Hz)
     
-    def play(self):
-        pass
+    def play(self, interval=None, save=False):
+        '''
+        Args:
+            interval (float): The pause between two frames in millisecond.
+            save (bool): Flag for saving the animation in the current working directory.
+        '''
+        if not interval: interval = 1000 / self.Hz # real time
+        # Create a figure
+        fig = plt.figure(figsize=(7,7))
+        ax = plt.axes(xlim=(-12, 12), ylim=(-12, 12))
+        # Set the aspect ratio of x and y axis equal to the true value
+        ax.set_aspect('equal')
+        
+        # Initialize data
+        agents = []
+        ids = []
+        angles = np.linspace(0, 2 * math.pi, num=12) # Use 12 points to approximate a circle
+        for i, traj in self.p.items():
+            w = self.agents[i].w if self.agents[i].w else 0.1
+            circle = np.stack((w / 2 * cos(angles), w / 2 * sin(angles)), axis=-1) # 12 points on the perimeter
+            agent, = ax.plot(traj[0][0] + circle[:, 0], traj[0][1] + circle[:, 1])
+            agents.append(agent)
+            ids.append(i)
+        
+        def animate_fast(i):
+            '''
+            Fast animation function update without redraw everything. 
+            Good for watching in real time, but will leave trace if saved.
+            '''
+            for agent, id in zip(agents, ids):
+                w = self.agents[id].w if self.agents[id].w else 0.1
+                circle = np.stack((w / 2 * cos(angles), w / 2 * sin(angles)), axis=-1) # 12 points on the perimeter
+                agent.set_data(self.p[id][i][0] + circle[:, 0], self.p[id][i][1] + circle[:, 1])
+            return agents
+        
+        def animate_slow(i):
+            '''
+            slow animation function redraw everything at each frame. 
+            Good for saving video but too slow to watch in real time.
+            '''
+            ax.clear()
+            # Redefine the ax
+            ax.set_xlim(-12, 12)
+            ax.set_ylim(-12, 12)
+            ax.set_aspect('equal')
+            for j in range(len(agents)):
+                id = ids[j]
+                w = self.agents[id].w if self.agents[id].w else 0.1
+                circle = np.stack((w / 2 * cos(angles), w / 2 * sin(angles)), axis=-1) # 12 points on the perimeter
+                agents[j], = ax.plot(self.p[id][i][0] + circle[:, 0], self.p[id][i][1] + circle[:, 1])
+            return agents
+        
+        # call the animator.  blit=True means only re-draw the parts that have changed.
+        animate = animate_slow if save else animate_fast
+        anim = animation.FuncAnimation(fig, animate, frames=len(self.t), interval=interval, blit=True)
+
+        # save the animation as an mp4.  This requires ffmpeg or mencoder to be
+        # installed.  The extra_args ensure that the x264 codec is used, so that
+        # the video can be embedded in html5.  You may need to adjust this for
+        # your system: for more information, see
+        # http://matplotlib.sourceforge.net/api/animation_api.html
+        if save:
+            t = time.localtime()
+            t = [str(i) for i in t[:6]]
+            t = "-".join(t)
+            filename = 'simulation' + t + '.mp4'
+            anim.save(filename)
+        return anim
+        # For command line usage
+        # plt.show()
+        
+        
     
     def plot_positions(self):
         pass

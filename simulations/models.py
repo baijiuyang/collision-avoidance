@@ -73,7 +73,7 @@ def null(n):
         return np.zeros(n), np.zeros(n)
         
 def approach_stationary_goal(s0, phi, d_phi, psi_g, r_g, p_spd, t_relax, b, k_g, c_1, c_2):
-    d_s = (s0 - p_spd) / t_relax
+    d_s = (p_spd - s0) / t_relax
     dd_phi = -b * d_phi - k_g * (phi - psi_g) * (np.exp(-c_1 * r_g) + c_2)
     return d_s, dd_phi
     
