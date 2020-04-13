@@ -456,12 +456,12 @@ def minimum_separation(p0, p1, v0, v1):
     dca = np.sqrt(1 - (inner(p01, v10) / (norm(p01) * norm(v10))) ** 2) * norm(p01)
     ttca = inner(p01, v10) / norm(v10) ** 2 # np.inner takes care of the sign
     if inner(np.array(v1), np.array(p0) - np.array(p1) + v10 * ttca) < 0: # Check passing order
-        dca = -dca
+        dca *= -1
     return dca, ttca
     
     
     
-def collision_trajectory(beta, side, spd1=2.0, w=1.5, r=10, Hz=100, animate=False, interval=None):
+def collision_trajectory(beta, side, spd1=1.3, w=1.5, r=10, r_min=0, Hz=100, animate=False, interval=None):
     '''
     This function produces near-collision trajectories of circular agents 0 and 1 with 
     a defined beta angle. The speed of agent 1 is constant. The speed of agent 0 will 
@@ -490,21 +490,24 @@ def collision_trajectory(beta, side, spd1=2.0, w=1.5, r=10, Hz=100, animate=Fals
     p0 = np.array([0, -r])
     p01 = p1 - p0
     v1 = np.array([spd1 * sin(alpha), spd1 * cos(alpha)])
-    a = r ** 2 * sin(alpha) ** 2 - w ** 2
-    b = -2 * spd1 * (cos(alpha) * (norm(p01) ** 2 - w ** 2) + r ** 2 * (1 - cos(alpha)) ** 2)
-    c = spd1 ** 2 * (norm(p01) ** 2 - w ** 2 - r ** 2 * (1 - cos(alpha)) ** 2)
+    a = r ** 2 * sin(alpha) ** 2 - r_min ** 2
+    b = -2 * spd1 * (cos(alpha) * (norm(p01) ** 2 - r_min ** 2) + r ** 2 * (1 - cos(alpha)) ** 2)
+    c = spd1 ** 2 * (norm(p01) ** 2 - r_min ** 2 - r ** 2 * (1 - cos(alpha)) ** 2)
     d = (b ** 2) - (4 * a * c)
 
-    # find two solutions
-    sol1 = (-b - sqrt(d)) / (2 * a)
-    sol2 = (-b + sqrt(d)) / (2 * a)
-    
-    if side == 'f':
-        v0 = np.array([0, max(sol1, sol2)])
-    elif side == 'b': 
-        v0 = np.array([0, min(sol1, sol2)])
+    if r_min == 0:
+        v0 = np.array([0, spd1])
     else:
-        raise Exception('Argument side should be either \'f\' or \'b\'')
+        # find two solutions
+        sol1 = (-b - sqrt(d)) / (2 * a)
+        sol2 = (-b + sqrt(d)) / (2 * a)
+        
+        if side == 'f':
+            v0 = np.array([0, max(sol1, sol2)])
+        elif side == 'b': 
+            v0 = np.array([0, min(sol1, sol2)])
+        else:
+            raise Exception('Argument side should be either \'f\' or \'b\'')
     t = 2 * r / spd1
     n = int(t * Hz)
     traj0 = np.cumsum(np.tile(v0 / Hz, (n, 1)), axis=0) + np.expand_dims(p0, axis=0)
@@ -520,9 +523,10 @@ def collision_trajectory(beta, side, spd1=2.0, w=1.5, r=10, Hz=100, animate=Fals
         agent1, = ax.plot(traj1[0, 0] + circle[:, 0], traj1[0, 1] + circle[:, 1], 'r')
         def animate_fast(i):
             '''
-            Fast animation function update without clear. Good for
-            watching in real time, but will leave trace if saved.
+                Fast animation function update without clear. Good for
+                watching in real time, but will leave trace if saved.
             '''
+            # ms is the short for markersize
             agent0.set_data(traj0[i, 0] + circle[:, 0], traj0[i, 1] + circle[:, 1])
             agent1.set_data(traj1[i, 0] + circle[:, 0], traj1[i, 1] + circle[:, 1])
 
