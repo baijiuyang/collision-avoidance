@@ -19,18 +19,18 @@ def d_dist(p0, p1, v0, v1):
     Computes the derivative of distance as a scaler.
     '''
     if len(np.shape(p0)) == 1:
-        return (v1[0] - v0[0] + v1[1] - v0[1]) / dist(p0, p1)
+        return ((p1[0] - p0[0]) * (v1[0] - v0[0]) + (p1[1] - p0[1]) * (v1[1] - v0[1])) / dist(p0, p1)
     else:
-        return (v1[:, 0] - v0[:, 0] + v1[:, 1] - v0[:, 1]) / dist(p0, p1)
+        return ((p1[:, 0] - p0[:, 0]) * (v1[:, 0] - v0[:, 0]) + (p1[:, 1] - p0[:, 1]) * (v1[:, 1] - v0[:, 1])) / dist(p0, p1)
     
 def d_speed(v, a):
     '''
     Computes the derivative of speed as a scaler.
     '''
     if len(np.shape(v)) == 1:
-        return (a[0] + a[1]) / norm(v)
+        return (v[0] * a[0] + v[1] * a[1]) / norm(v)
     else:
-        return (a[:, 0] + a[:, 1]) / norm(v, axis=1)
+        return (v[:, 0] * a[:, 0] + v[:, 1] * a[:, 1]) / norm(v, axis=1)
 
 def rotate(vec, angle):
     '''
@@ -258,8 +258,6 @@ def d_beta(p0, p1, v0, v1, a0):
         v01 = v1 - v0 # Relative velocity
         numerator = inner(v01, v0) + inner(r01, a0) - cos(abs(b)) * (d_dist(p0, p1, v0, v1) * norm(v0) + norm(r01) * d_speed(v0, a0))
         denominator = -abs(sin(abs(b))) * norm(r01) * norm(v0)
-        if abs(denominator - 0) < 1E-9:
-            return None
         if b > 0:
             return numerator / denominator
         else:
@@ -350,8 +348,7 @@ def d_psi(p0, p1, v0, v1, ref=[0, 1]):
         psi_ = psi(p0, p1, ref)
         r01 = [i - j for i, j in zip(p1, p0)]
         v01 = [i - j for i, j in zip(v1, v0)]
-        sign_v = np.sign(inner(v01, r01))
-        numerator = -inner(v01, ref) + cos(abs(psi_)) * sign_v * norm(v01)
+        numerator = -inner(v01, ref) + cos(abs(psi_)) * d_dist(p0, p1, v0, v1)
         denominator = abs(sin(abs(psi_))) * norm(r01)
         if psi_ > 0:
             return numerator / denominator
@@ -378,7 +375,7 @@ def d_psi_numeric(p0, p1, Hz, ref=[0, 1]):
     Return:
         (np array of floats): Rate of change of psi.
     '''
-    psis = psi(p0, p1, Hz, ref)
+    psis = psi(p0, p1, ref)
     d_psis = np.diff(psis)
     d_psis = np.append(d_psis, d_psis[-1]) # pad to make d_psis the length as p0
     i = np.where(np.absolute(d_psis) > math.pi) # When psi switch sign around pi

@@ -31,7 +31,7 @@ class Simulation:
         self.phi = {}
         self.d_phi = {}
         self.dd_phi = {}
-        self.d_s = {}        
+        self.d_s = {}
         self.agents = {}
         self.add_agents(agents)
         self.Hz = Hz
@@ -111,6 +111,7 @@ class Simulation:
             w = self.agents[i].w if self.agents[i].w else 0.1
             circle = np.stack((w / 2 * cos(angles), w / 2 * sin(angles)), axis=-1) # 12 points on the perimeter
             agent, = ax.plot(traj[0][0] + circle[:, 0], traj[0][1] + circle[:, 1])
+            ax.plot([p[0] for p in traj], [p[1] for p in traj], agent.get_color())
             agents.append(agent)
             ids.append(i)
         
@@ -140,6 +141,7 @@ class Simulation:
                 w = self.agents[id].w if self.agents[id].w else 0.1
                 circle = np.stack((w / 2 * cos(angles), w / 2 * sin(angles)), axis=-1) # 12 points on the perimeter
                 agents[j], = ax.plot(self.p[id][i][0] + circle[:, 0], self.p[id][i][1] + circle[:, 1])
+                ax.plot([p[0] for p in self.p[id]], [p[1] for p in self.p[id]], agents[j].get_color())
             return agents
         
         # call the animator.  blit=True means only re-draw the parts that have changed.
