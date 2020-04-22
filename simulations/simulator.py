@@ -4,7 +4,7 @@
 
 import numpy as np
 from numpy.linalg import norm
-from helper import sp2v, v2sp, sp2a
+from helper import sp2v, v2sp, sp2a, av2dsdp
 from numpy import sqrt, sin, cos
 from models import Model
 import time
@@ -26,27 +26,14 @@ class Simulation:
     def __init__(self, agents, Hz):
         self.t = [0]
         self.p = {}
-        self.v = {}
-        self.a = {}
-        self.phi = {}
-        self.d_phi = {}
-        self.dd_phi = {}
-        self.d_s = {}
         self.agents = {}
         self.add_agents(agents)
         self.Hz = Hz
-        
+
     def add_agent(self, agent):
         self.agents[agent.id] = agent
         self.p[agent.id] = [agent.p[:]]
-        self.v[agent.id] = [agent.v[:]]
-        self.a[agent.id] = [agent.a[:]]
-        self.phi[agent.id] = [agent.phi]
-        self.d_phi[agent.id] = [agent.d_phi]
-        self.dd_phi[agent.id] = [agent.dd_phi]
-        self.d_s[agent.id] = [agent.d_s]
-        
-        
+
     def add_agents(self, agents):
         for agent in agents:
             self.add_agent(agent)
@@ -54,22 +41,9 @@ class Simulation:
     def update(self, Hz=None):
         if not Hz: Hz = self.Hz
         # Parallel update: 1. Computing without updating, 2. Updating
-        # Compute  
-        p_old, v_old = {}, {}
-        for i, p in self.p.items():
-            if len(self.t) == 1:
-                p_old[i] = p[-1]
-            else:
-                p_old[i] = p[-2]
-        for i, v in self.v.items():
-            if len(self.t) == 1:
-                v_old[i] = v[-1]
-            else:
-                v_old[i] = v[-2]
-        # print('p_old = ', p_old)
-        # print('v_old = ', v_old)
+        # Compute
         for agent in self.agents.values():
-            agent.interact(self.agents.values(), p_old, v_old, Hz)
+            agent.interact(self.agents.values())
 
         # Update
         self.t.append(self.t[-1] + 1.0 / Hz)
@@ -77,13 +51,7 @@ class Simulation:
             agent.move(Hz)
             # Record new states
             self.p[agent.id].append(agent.p[:])
-            self.v[agent.id].append(agent.v[:])
-            self.a[agent.id].append(agent.a[:])
-            self.phi[agent.id].append(agent.phi)
-            self.d_phi[agent.id].append(agent.d_phi)
-            self.dd_phi[agent.id].append(agent.dd_phi)
-            self.d_s[agent.id].append(agent.d_s)
-        
+
     def simulate(self, t_total, Hz=None):
         if not Hz: Hz = self.Hz
         # Run update t_total * Hz times
@@ -104,48 +72,28 @@ class Simulation:
         ax.set_aspect('equal')
         
         # Initialize data
-        agents = []
-        ids = []
+        agents, circles, ws, ids = [], [], [], []
         angles = np.linspace(0, 2 * math.pi, num=12) # Use 12 points to approximate a circle
         for i, traj in self.p.items():
             w = self.agents[i].w if self.agents[i].w else 0.1
             circle = np.stack((w / 2 * cos(angles), w / 2 * sin(angles)), axis=-1) # 12 points on the perimeter
             agent, = ax.plot(traj[0][0] + circle[:, 0], traj[0][1] + circle[:, 1])
-            ax.plot([p[0] for p in traj], [p[1] for p in traj], agent.get_color())
+            ax.plot([p[0] for p in traj], [p[1] for p in traj], color=agent.get_color()) # Plot trajectory
             agents.append(agent)
+            ws.append(w)
+            circles.append(circle)
             ids.append(i)
         
-        def animate_fast(i):
+        def animate(i):
             '''
             Fast animation function update without redraw everything. 
-            Good for watching in real time, but will leave trace if saved.
+            Good for watching in real time, but will leave trace of movement if saved.
             '''
-            for agent, id in zip(agents, ids):
-                w = self.agents[id].w if self.agents[id].w else 0.1
-                circle = np.stack((w / 2 * cos(angles), w / 2 * sin(angles)), axis=-1) # 12 points on the perimeter
+            for agent, circle, id in zip(agents, circles, ids):
                 agent.set_data(self.p[id][i][0] + circle[:, 0], self.p[id][i][1] + circle[:, 1])
             return agents
         
-        def animate_slow(i):
-            '''
-            slow animation function redraw everything at each frame. 
-            Good for saving video but too slow to watch in real time.
-            '''
-            ax.clear()
-            # Redefine the ax
-            ax.set_xlim(-12, 12)
-            ax.set_ylim(-12, 12)
-            ax.set_aspect('equal')
-            for j in range(len(agents)):
-                id = ids[j]
-                w = self.agents[id].w if self.agents[id].w else 0.1
-                circle = np.stack((w / 2 * cos(angles), w / 2 * sin(angles)), axis=-1) # 12 points on the perimeter
-                agents[j], = ax.plot(self.p[id][i][0] + circle[:, 0], self.p[id][i][1] + circle[:, 1])
-                ax.plot([p[0] for p in self.p[id]], [p[1] for p in self.p[id]], agents[j].get_color())
-            return agents
-        
         # call the animator.  blit=True means only re-draw the parts that have changed.
-        animate = animate_slow if save else animate_fast
         anim = animation.FuncAnimation(fig, animate, frames=len(self.t), interval=interval, blit=True)
 
         # save the animation as an mp4.  This requires ffmpeg or mencoder to be
@@ -162,9 +110,7 @@ class Simulation:
         return anim
         # For command line usage
         # plt.show()
-        
-        
-    
+
     def plot_positions(self):
         pass
         
@@ -178,78 +124,67 @@ class Agent:
     
     Fields:
         id (int): Agent id.
-        p, v, a (2-d vector of floats): The current position, velocity
-            and acceleration of the agent.
-        s, phi (1-d array of floats): The current speed and heading.
-        d_s, d_phi (1-d array of floats): The current rate of change of
-            speed and heading.
-        dd_phi (1-d array of floats): The current rate of change of d_phi.
+        goal_id (int): The id of the goal of the agent.
+        w (float or None): The width of the agent.
+        p, v (2-d vector): The current position and velocity of the agent.
+        s, phi (float): The current speed and heading.
+        d_s, d_phi (float): The current rate of change of speed and heading.
+        a, dd_phi (float): Acceleration and derivative of d_phi from the output of different models.
         p_spd (float): The preferred speed of the agent.
         models (dict): Keys are model names. Values are model functions.
         ref (2-d vector): The allocentric reference axis.
-        d_s_next, dd_phi_next (floats): Backstage d_s, and dd_phi.
+        constant (bool): Whether this agent has constant state.
     '''
-    def __init__(self, id, goal_id, w, p0, v0, a0, s, phi, d_phi, dd_phi, d_s, p_spd, model_names, model_args, constant, ref=[0,1]):
+    def __init__(self, id, init_state, goal_id=None, w=None, p_spd=None, model_names=None, model_args=None, constant=False, ref=[0, 1]):
         '''
         This constructor initialize an agent (1) through vectoral velocity and acceleration or
         (2) through speed, phi (orientation given ref as the allocentric reference axis), d_phi
         
         Args:
             model_args (dict): {'arg_name': arg value}.
+            init_state (dict): {'p': p0, 'v': v0, 's': s0, 'phi': phi0}
         '''
         self.id = id
         self.goal_id = goal_id
         self.w = w
-        self.p = p0
-        self.v = v0
-        self.a = a0
-        self.s = s
-        self.d_s = d_s
-        self.phi = phi
-        self.d_phi = d_phi
-        self.dd_phi = dd_phi
+        self.ref = [i / norm(ref) for i in ref]
         self.p_spd = p_spd
-        self.models = {}
-        self.ref = ref
         self.constant = constant
+        self.p = init_state['p']
+        if 'v' in init_state:
+            self.v = init_state['v']
+            self.s, self.phi = v2sp(self.v, ref=self.ref)
+        else:
+            self.s = init_state['s']
+            self.phi = init_state['phi']
+            self.v = sp2v(self.s, self.phi, ref=self.ref)
+        self.a = [0, 0]
+        self.d_s = 0
+        self.d_phi = 0
+        self.dd_phi = 0
+        self.models = {}
+        self.a_next = [0, 0]
         self.d_s_next = 0
         self.dd_phi_next = 0
-        for name, args in zip(model_names, model_args):
-            self.models[name] = Model(name, args, self.ref)
-        if v0 == None:
-            self.sp2av()
-        else:
-            self.av2sp()
+        if not self.constant:
+            for name, args in zip(model_names, model_args):
+                self.models[name] = Model(name, args, self.ref)
 
-    def sp2av(self):
-        self.v = sp2v(self.s, self.phi, ref=self.ref)
-        self.a = sp2a(self.s, self.d_s, self.phi, self.d_phi)
-    
-    def av2sp(self):
-        s, phi = v2sp(self.v, ref=self.ref)
-        if s == 0:
-            phi = 0
-        self.s, self.phi = s, phi
-    
-    def interact_pairwise(self, source, p0_old, p1_old, v0_old, v1_old, Hz):
+    def interact_pairwise(self, source):
         '''
-        Computes the tangential acceleration (d_s) and rotational acceleration (dd_phi)
-        caused by one source based on the models.
+        Computes vector acceleration caused by one source based on the models.
         
         Args:
             source (Object from the Agent class): See definition in the Agent class.
     
         Return:
-            d_s, dd_phi (1-d np array of float): The time series of tangential and rotational
-                acceleration of the pedestrian.
+            pred_sum (dict): The sum of model predictions in the form of
+                {'ax': ax, 'ay': ay, 'd_s': d_s, 'dd_phi': dd_phi}.
         '''
-        # print("%d is interacting with %d\n" % (self.id, source.id))
-        # Pre-allocation of return variables
-        d_s, dd_phi = 0, 0
-        
+        pred_sum = {}
         # Do not interact with self or if self is constant
         if source.id == self.id or self.constant: 
-            return d_s, dd_phi
+            return pred_sum
         
         source_type = ''
         if source.id == self.goal_id:
@@ -259,33 +194,28 @@ class Agent:
             
         # Combine the influences of all models
         for model in self.models.values():
-            _d_s, _dd_phi = model(self, source, source_type, p0_old, p1_old, v0_old, v1_old, Hz)
-            d_s += _d_s
-            dd_phi += _dd_phi
-        return d_s, dd_phi
+            pred = model(self, source, source_type) # Model objects return a dictionary 
+            for key in pred:
+                pred_sum[key] = pred_sum.get(key, 0) + pred[key]
+        return pred_sum
         
-    def interact(self, sources, p_old, v_old, Hz):
+    def interact(self, sources):
         '''
         Combine the influences from all sources.
         
         Args:
             sources (Agent object): Source of influence.
-            p_old, v_old (dict): {agent_id: position of last frame}, {agent_id: velocity of last frame}.
         '''
         if self.constant: return
-        # Pre-allocation of return variables
-        d_s, dd_phi = 0, 0
-        p0_old = p_old[self.id]
-        v0_old = v_old[self.id]
-        # Combine the influence of all sources
+
+        # Gather the influence of all sources in backstage
         for source in sources:
-            p1_old = p_old[source.id]
-            v1_old = v_old[source.id]
-            _d_s, _dd_phi = self.interact_pairwise(source, p0_old, p1_old, v0_old, v1_old, Hz)
-            d_s += _d_s
-            dd_phi += _dd_phi
-        self.d_s_next, self.dd_phi_next = d_s, dd_phi
-            
+            src = self.interact_pairwise(source)
+            self.a_next[0] += src.get('ax', 0)
+            self.a_next[1] += src.get('ay', 0)
+            self.d_s_next += src.get('d_s', 0)
+            self.dd_phi_next += src.get('dd_phi', 0)
+        
     def move(self, Hz):
         '''
         Updates position, velocity, and acceleration using current velocity, acceleration, 
@@ -295,13 +225,32 @@ class Agent:
             Hz (float): The temporal frequency of simulation.
         '''
         # Update variables based on the current values of their derivatives
-        self.p[0] += self.v[0] * (1.0 / Hz) + 0.5 * self.a[0] * (1.0 / Hz) ** 2
-        self.p[1] += self.v[1] * (1.0 / Hz) + 0.5 * self.a[1] * (1.0 / Hz) ** 2        
-        self.phi += self.d_phi * (1.0 / Hz) + 0.5 * self.dd_phi * (1.0 / Hz) ** 2
-        self.d_phi += self.dd_phi * (1.0 / Hz)
-        self.s += self.d_s * (1.0 / Hz)
+        dt = 1.0 / Hz        
+        self.p[0] += self.v[0] * dt 
+        self.p[1] += self.v[1] * dt
+        if self.constant:
+            return
+        self.s += self.d_s * dt
+        self.phi += self.d_phi * dt
+        self.v = sp2v(self.s, self.phi, ref=self.ref)
         
-        # Update the derivatives
-        self.d_s, self.dd_phi = self.d_s_next, self.dd_phi_next
-        self.sp2av()
+        # Apply backstage influence then clear them
+        self.a[0], self.a[1], self.d_s, self.dd_phi = self.a_next[0], self.a_next[1], self.d_s_next, self.dd_phi_next
+        self.a_next[0], self.a_next[1], self.d_s_next, self.dd_phi_next = 0, 0, 0, 0
+        
+        # Apply a to d_s and d_phi
+        v_next = [i + j * dt for i, j in zip(self.v, self.a)]
+        s_next, phi_next = v2sp(v_next, ref=self.ref)
+        self.d_s += s_next - self.s
+        self.d_phi += phi_next - self.phi
+        
+        # Apply dd_phi to d_phi
+        self.d_phi += self.dd_phi * dt
+        
+        # Debug log
+        # if self.id == 1:
+            # print(self.p, self.v, self.a, self.s, self.phi, self.d_s, self.d_phi, self.dd_phi)
+        
+        
+        
      

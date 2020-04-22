@@ -4,15 +4,27 @@
 
 import numpy as np
 from numpy.linalg import norm
-from numpy import sqrt, inner, sin, cos, arccos, arcsin, arctan
+from numpy import sqrt, sin, cos, arccos, arcsin, arctan
 import math
 from matplotlib import animation, pyplot as plt
+import time
+
+def inner(x, y):
+    '''
+    A wraper for numpy.inner() to make it be able to compute element wise
+    inner product between x and y, which can be single vectors or lists of
+    vectors.
+    '''
+    if len(np.shape(x)) == 1:
+        return np.inner(x, y)
+    else:
+        retval = np.zeros(len(x))
+        for i in range(len(retval)):
+            retval[i] = inner(x[i], y[i])
+        return retval
 
 def dist(p0, p1):
-    if len(np.shape(p0)) == 1:
-        return norm([i - j for i, j in zip(p1, p0)])
-    else:
-        return norm(p1 - p0, axis=1)
+    return norm(np.array(p1) - np.array(p0), axis=-1)
     
 def d_dist(p0, p1, v0, v1):
     '''
@@ -47,6 +59,7 @@ def rotate(vec, angle):
         # Rotation matrix
         M = [[cos(angle), -sin(angle)], [sin(angle), cos(angle)]]
         return np.matmul(vec, M)
+    
     # When only one angle
     if len(np.shape(angle)) == 0:
         return _rotate(vec, angle)
@@ -97,10 +110,13 @@ def v2sp(v, ref=[0, 1]):
     ref = [i / norm(ref) for i in ref]
     def _v2sp(v, ref):
         s = norm(v)
-        phi = arccos(inner(v, ref) / s)
-        # Phi is negative when it's on the left side of ref
-        if ref[1] * v[0] - ref[0] * v[1] < 0:
-            phi = -phi
+        if s == 0:
+            phi = None
+        else:
+            phi = arccos(inner(v, ref) / s)
+            # Phi is negative when it's on the left side of ref
+            if ref[1] * v[0] - ref[0] * v[1] < 0:
+                phi = -phi
         return s, phi
         
     if len(np.shape(v)) == 1:
@@ -128,8 +144,8 @@ def sp2a(s, d_s, phi, d_phi, ref=[0, 1]):
     '''
     ref = [i / norm(ref) for i in ref]
     def _sp2a(s, d_s, phi, d_phi, ref):
-        ori = rotate(ref, phi)
-        _, phi = v2sp(ori, ref=[0, 1])
+        v_unit = rotate(ref, phi)
+        _, phi = v2sp(v_unit, ref=[0, 1]) # Change ref to [0 , 1] so that the following equations work
         dd_x = d_s * sin(phi) + s * cos(phi) * d_phi
         dd_y = d_s * cos(phi) - s * sin(phi) * d_phi
         return [dd_x, dd_y]
@@ -140,7 +156,35 @@ def sp2a(s, d_s, phi, d_phi, ref=[0, 1]):
         for i in range(len(accs)):
             accs[i] = _sp2a(s[i], d_s[i], phi[i], d_phi[i], ref)
         return accs
-   
+
+def av2dsdp(v, a):
+    '''
+    Computes rate of change of speed and heading based on vector acceleration.
+    
+    Args:
+        a (2-d vector or np array of 2-d vectors): Vector acceleration.
+        v (2-d vector or np array of 2-d vectors): Vector velocity.
+    Returns:
+        d_s (float or np array of floats): Rate of change of speed in m/s^2.
+        d_phi (float or np array of floats): Rate of change of heading in rad/s).
+            Positive mean clockwise heading change.
+    '''
+    def _av2dsdp(v, a):
+        if v[0] == 0 and v[1] == 0:
+            d_s = norm(a)
+            d_phi = 0
+        else:
+            d_s = inner(a, v) / norm(v) # correctly signed
+            d_phi = inner(a, rotate(v, math.pi / 2)) / norm(v) ** 2 # correctly signed
+        return d_s, d_phi
+    if len(np.shape(a)) == 1:
+        return _av2dsdp(v, a)
+    else:
+        d_ss, d_phis = np.zeros(len(a)), np.zeros(len(a))
+        for i in range(len(d_ss)):
+            d_ss[i], d_phis[i] = _av2dsdp(v[i], a[i])
+        return np.stack((d_ss, d_phis), axis=-1)
+    
 def theta(p0, p1, w):
     '''
     Computes the visual angle of p1 in the perspective of p0
@@ -151,12 +195,7 @@ def theta(p0, p1, w):
     Return:
         (float or np array of floats): Theta in radians.
     '''
-    if len(np.shape(p0)) == 1:
-        r01 = [i - j for i, j in zip(p1, p0)]
-        r = norm(r01)
-    else:
-        r01 = np.array(p1) - np.array(p0)
-        r = norm(r01, axis=1)
+    r = dist(p0, p1)
     return 2 * arctan(w / (2 * r))
     
 def d_theta(p0, p1, v0, v1, w):
@@ -201,7 +240,7 @@ def beta(p0, p1, v0):
     '''
     Compute beta angle of p1 in the perspective of p0 in radians.
     Beta angle is defined as the angle between the line of sight and
-    heading direction. beta = phi (heading) - psi (bearing).
+    heading direction. beta = psi (bearing) - phi (heading).
     
     Args:
         p0, p1 (2-d vector or np array of 2-d vectors): Time series of positions in meter,
@@ -219,9 +258,9 @@ def beta(p0, p1, v0):
         s0 = norm(v0)
         angle = arccos(inner(v0, r01) / (s0 * r))
         # Decide the side of agent 1 on agent 0. Rotate v0 90 degree clockwise 
-        # v0' = (y, -x) if the sign of its dot product with r01 is positive, 
-        # agent 1 is on the right side of agent 0, which means a negative beta. Vice versa.
-        if v0[1] * r01[0] - v0[0] * r01[1] > 0: 
+        # v0' = (y, -x) if the sign of its dot product with r01 is negative, 
+        # agent 1 is on the left side of agent 0, which means a negative beta. Vice versa.
+        if v0[1] * r01[0] - v0[0] * r01[1] < 0: 
             angle = -angle
         return angle
         
@@ -233,44 +272,26 @@ def beta(p0, p1, v0):
             betas[i] = _beta(p0[i], p1[i], v0[i])
         return betas
 
-def d_beta(p0, p1, v0, v1, a0):
+def d_beta(p0, p1, v0, v1, d_phi):
     '''
     Compute the analytical solution the rate of change of beta angle of p1 
     in the perspective of p0. Beta angle is defined as the angle between 
-    the line of sight and heading direction. beta = phi - psi.
+    the line of sight and heading direction. beta = psi - phi.
     
     Args:
         p0, p1 (2-d vectors or np array of floats): Time series of positions in meter,
             with the shape (n_step, 2).
         v0, v1 (2-d vectors or np array of floats): Time series of velocities 
             in meter / second, with the shape (n_step, 2).
-        a0, (2-d vector or np array of 2-d vectors): Time series of accelerations of agent 0
-            in meter / second^2, with the shape (n_step, 2).
+        d_phi (float or list of floats): Rate of change of heading direction.
         
     Return:
         d_beta (float or np array of floats): An array of rate of change of beta 
             angle in radians / second.
     '''
-    
-    def _d_beta(p0, p1, v0, v1, a0):
-        b = beta(p0, p1, v0)
-        r01 = [i - j for i, j in zip(p1, p0)] # Distance between 0 and 1
-        v01 = v1 - v0 # Relative velocity
-        numerator = inner(v01, v0) + inner(r01, a0) - cos(abs(b)) * (d_dist(p0, p1, v0, v1) * norm(v0) + norm(r01) * d_speed(v0, a0))
-        denominator = -abs(sin(abs(b))) * norm(r01) * norm(v0)
-        if b > 0:
-            return numerator / denominator
-        else:
-            return - numerator / denominator
-        
-    if len(np.shape(p0)) == 1:
-        return _d_beta(p0, p1, v0, v1, a0)
-    else:
-        d_betas = np.zeros(len(p0))
-        for i in range(len(d_betas)):
-            d_betas[i] = _d_beta(p0[i], p1[i], v0[i], v1[i], a0[i])
-        return d_betas
-    
+    d_phi = np.array(d_phi)
+    return d_psi(p0, p1, v0, v1) - d_phi
+  
 def d_beta_numeric(p0, p1, v0, Hz):
     '''
     Computes the numeric solution of rate of change of beta angle.
@@ -329,39 +350,32 @@ def psi(p0, p1, ref=[0,1]):
             psis[i] = _psi(p0[i], p1[i], ref)
         return psis
     
-def d_psi(p0, p1, v0, v1, ref=[0, 1]):
+
+def d_psi(p0, p1, v0, v1):
     '''
     Computes the analytical solutions of rate of change of psi angle, which is
     the angle between line of sight and ref (an allocentric reference axis). 
     
     Args:
-        psi (float or np array of floats): The angle between line of sight and ref.
         p0, p1 (2-d vector or np array of 2-d vectors): Positions of agent 0 and 1.
         v0, v1 (2-d vector or np array of 2-d vectors): Velocities of agent 0 and 1.
-        ref (2-d vector): The allocentric reference axis. [0, 1] or [1, 0].
     
     Return:
         (float or np array of floats): Rate of change of psi.
     '''
-    ref = [i / norm(ref) for i in ref]
-    def _d_psi(p0, p1, v0, v1, ref):
-        psi_ = psi(p0, p1, ref)
+    def _d_psi(p0, p1, v0, v1):
         r01 = [i - j for i, j in zip(p1, p0)]
-        v01 = [i - j for i, j in zip(v1, v0)]
-        numerator = -inner(v01, ref) + cos(abs(psi_)) * d_dist(p0, p1, v0, v1)
-        denominator = abs(sin(abs(psi_))) * norm(r01)
-        if psi_ > 0:
-            return numerator / denominator
-        else:
-            return - numerator / denominator 
+        r = norm(r01)
+        r01_i = rotate(r01, math.pi / 2) / r
+        return (inner(v1, r01_i) - inner(v0, r01_i)) / r
     if len(np.shape(p0)) == 1:
-        return _d_psi(p0, p1, v0, v1, ref)
+        return _d_psi(p0, p1, v0, v1)
     else:
         d_psis = np.zeros(len(p0))
         for i in range(len(d_psis)):
-            d_psis[i] = _d_psi(p0[i], p1[i], v0[i], v1[i], ref)
+            d_psis[i] = _d_psi(p0[i], p1[i], v0[i], v1[i])
         return d_psis
-    
+        
 def d_psi_numeric(p0, p1, Hz, ref=[0, 1]):
     '''
     Computes the numeric solution of rate of change of psi angle, the accuracy 
@@ -429,7 +443,7 @@ def broken_sigmoid(x, a=1, b=20):
     '''
     return b / (1 + np.exp(np.absolute(x / a)))
 
-def minimum_separation(p0, p1, v0, v1):
+def min_sep(p0, p1, v0, v1):
     '''
     This function computes the minimum separation or distance at closest approach (dca) 
     and time to minimum separation or time to closest approach (ttca) of two trajectiles.
@@ -458,7 +472,7 @@ def minimum_separation(p0, p1, v0, v1):
     
     
     
-def collision_trajectory(beta, side, spd1=1.3, w=1.5, r=10, r_min=0, Hz=100, animate=False, interval=None):
+def collision_trajectory(beta, side, spd1=1.3, w=1.5, r=10, r_min=0, Hz=100, animate=False, interval=None, save=False):
     '''
     This function produces near-collision trajectories of circular agents 0 and 1 with 
     a defined beta angle. The speed of agent 1 is constant. The speed of agent 0 will 
@@ -482,7 +496,7 @@ def collision_trajectory(beta, side, spd1=1.3, w=1.5, r=10, r_min=0, Hz=100, ani
         np.tile(v0, (n, 1)), np.tile(v1, (n, 1)) (2-d np array of float): The velocity of agent 0 to 
             achieve near-collision with agent 1.
     '''
-    alpha = (180 - 2 * beta) * 2 * math.pi / 360 # Central angle of line of sight
+    alpha = (180 + 2 * beta) * 2 * math.pi / 360 # Central angle of line of sight
     p1 = np.array([-r * sin(alpha), -r * cos(alpha)])
     p0 = np.array([0, -r])
     p01 = p1 - p0
@@ -509,32 +523,57 @@ def collision_trajectory(beta, side, spd1=1.3, w=1.5, r=10, r_min=0, Hz=100, ani
     n = int(t * Hz)
     traj0 = np.cumsum(np.tile(v0 / Hz, (n, 1)), axis=0) + np.expand_dims(p0, axis=0)
     traj1 = np.cumsum(np.tile(v1 / Hz, (n, 1)), axis=0) + np.expand_dims(p1, axis=0)
-    
+
     if animate:
         if not interval: interval = 1000 / Hz
-        fig = plt.figure(figsize=(7, 7))
-        ax = plt.axes(xlim=(-12, 12), ylim=(-12, 12))
-        angles = np.linspace(0, 2 * math.pi, num=12)
-        circle = np.stack((w / 2 * cos(angles), w / 2 * sin(angles)), axis=-1)
-        agent0, = ax.plot(traj0[0, 0] + circle[:, 0], traj0[0, 1] + circle[:, 1], 'b')
-        agent1, = ax.plot(traj1[0, 0] + circle[:, 0], traj1[0, 1] + circle[:, 1], 'r')
-        def animate_fast(i):
-            '''
-                Fast animation function update without clear. Good for
-                watching in real time, but will leave trace if saved.
-            '''
-            # ms is the short for markersize
-            agent0.set_data(traj0[i, 0] + circle[:, 0], traj0[i, 1] + circle[:, 1])
-            agent1.set_data(traj1[i, 0] + circle[:, 0], traj1[i, 1] + circle[:, 1])
-
-            return agent0, agent1
-        # call the animator.  blit=True means only re-draw the parts that have changed.
-        anim = animation.FuncAnimation(fig, animate_fast, frames=len(traj0), interval=interval, blit=True)
+        trajs = np.stack((traj0, traj1))
+        play_trajs(trajs, [w, w], Hz, colors='br', interval=interval, save=save)
     
     return traj0, traj1, np.tile(v0, (n, 1)), np.tile(v1, (n, 1))
     
+def play_trajs(trajs, ws, Hz, colors=None, interval=None, save=False):
+    '''
+    trajs (2-d np array)
+    '''
+    if not interval: interval = 1000 / Hz
+    if not colors: colors = [None] * len(trajs)
+    # Create a figure
+    fig = plt.figure(figsize=(7, 7))
+    ax = plt.axes(xlim=(-12, 12), ylim=(-12, 12))
+    ax.set_aspect('equal')
     
-    
+    # Initialize plots
+    angles = np.linspace(0, 2 * math.pi, num=12)
+    circles = []
+    agents = []
+
+    for traj, w, color in zip(trajs, ws, colors):
+        circle = np.stack((w / 2 * cos(angles), w / 2 * sin(angles)), axis=-1)
+        agent, = ax.plot(traj[0, 0] + circle[:, 0], traj[0, 1] + circle[:, 1], color=color)
+        ax.plot([p[0] for p in traj], [p[1] for p in traj], color=agent.get_color()) # Plot trajectory
+        agents.append(agent)
+        circles.append(circle)
+
+    def animate(i):
+        # ms is the short for markersize
+        for agent, traj, circle in zip(agents, trajs, circles):
+            agent.set_data(traj[i][0] + circle[:, 0], traj[i][1] + circle[:, 1])
+        return agents
+
+    # call the animator.  blit=True means only re-draw the parts that have changed.
+    anim = animation.FuncAnimation(fig, animate, frames=len(trajs[0]), interval=interval, blit=True)
+    # save the animation as an mp4.  This requires ffmpeg or mencoder to be
+        # installed.  The extra_args ensure that the x264 codec is used, so that
+        # the video can be embedded in html5.  You may need to adjust this for
+        # your system: for more information, see
+        # http://matplotlib.sourceforge.net/api/animation_api.html
+    if save:
+        t = time.localtime()
+        t = [str(i) for i in t[:6]]
+        t = "-".join(t)
+        filename = 'play_trial' + t + '.mp4'
+        anim.save(filename)
+    return anim
     
     
     
