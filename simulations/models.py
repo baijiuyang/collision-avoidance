@@ -6,7 +6,7 @@
 import numpy as np
 from numpy import sin, cos, tan, arcsin, arccos, arctan, inner
 from numpy.linalg import norm
-from helper import dist, d_dist, sp2a
+from helper import dist, d_dist, sp2a, rotate
 import helper
 from math import pi as PI
 
@@ -15,20 +15,15 @@ class Model:
     This class represents the model of pedestrian locomotion.
     
     Fields:
-        p (2-element list of float): The current position of the agent.
-        v (2-element list of float): The current velocity of the agent.
-        a (2-element list of float): The current acceleration of the agent.
-        p_spd (float): The preferred speed of the agent.
-        models (dict): Keys are model names. Values are model functions.
-        models (1-d list of char arrays): Model names.
-        model_args (2-d list of floats): Model arguments.   
+        model_name (char array): Model names.
+        model_args (dict): Model arguments in form of {'arg_name': arg_value}.   
         ref (2-d vector): Allocentric reference axis.
     '''
 
-    def __init__(self, model_name, model_args, ref=[0, 1]):
-        self.model_name = model_name
-        self.model_args = model_args
-        self.ref = ref
+    def __init__(self, model, ref=[0, 1]):
+        self.model_name = model['name']
+        self.model_args = model
+        self.ref = [i / norm(ref) for i in ref]
 
     def __call__(self, agent, source, source_type):
         '''
@@ -48,9 +43,10 @@ class Model:
         # Make prediction
         if self.model_name == 'approach_stationary_goal' and ('g' in source_type):
             s, phi, d_phi = agent.s, agent.phi, agent.d_phi
-            psi_g = helper.psi(p0, p1, self.ref)
+            psi_g = helper.psi(p0, p1, ref=self.ref)
             r_g = dist(p0, p1)
             d_s, dd_phi = approach_stationary_goal(s, phi, d_phi, psi_g, r_g, args['p_spd'], args['t_relax'], args['b'], args['k_g'], args['c_1'], args['c_2'])
+        
         elif self.model_name == 'optical_ratio_model' and ('o' in source_type):
             r = dist(p0, p1)
             d_r = d_dist(p0, p1, v0, v1)
@@ -59,8 +55,19 @@ class Model:
             d_beta = helper.d_beta(p0, p1, v0, v1, agent.d_phi)
             d_s, dd_phi = optical_ratio_model(r, d_r, w, beta, d_beta, args['k_s'], args['k_h'], args['c'])
         
-        elif self.model_name == 'optical_ratio_model2' and ('o' in source_type):
-            pass
+        elif self.model_name == 'perpendicular_ratio_acceleration' and ('o' in source_type):
+            w = source.w
+            d_phi = agent.d_phi
+            psi = helper.psi(p0, p1, ref=self.ref)
+            theta = helper.theta(p0, p1, w)
+            d_theta = helper.d_theta(p0, p1, v0, v1, w)
+            d_psi = helper.d_psi(p0, p1, v0, v1)
+            beta = helper.beta(p0, p1, v0)
+            alpha, a_mag = perpendicular_ratio_acceleration(beta, psi, theta, d_theta, d_psi, args['k'], args['c'])
+            a = rotate([i * a_mag for i in self.ref], alpha)
+            ax = a[0]
+            ay = a[1]
+            print(beta * 180 / PI, alpha * 180 / PI, a_mag)
             
         return {'ax': ax, 'ay': ay, 'd_s': d_s, 'dd_phi': dd_phi}
         
@@ -82,5 +89,28 @@ def optical_ratio_model(r, d_r, w, beta, d_beta, k_s, k_h, c):
     # print('d_theta = ', d_theta)
     return d_s, dd_phi
     
+def perpendicular_ratio_acceleration(beta, psi, theta, d_theta, d_psi, k, c):
+    '''
+    Computes the direction and magnituide of acceleration for moving obstacle avoidance.
+    
+    Args:
+        beta (float or np array of floats): The angle between line of sight and heading.
+            positive mean line of sight is on the right of heading.
+        psi (float or np array of floats): The direction of line of sight given an
+            allocentric reference axis.
+        theta (float or np array of floats): The visual angle of the obstacle.
+        d_theta, d_psi (float or np array of floats): The rate of change of theta and psi.
+        k, c (float or np array of floats):
 
+      
+    '''
+    alpha = psi - np.sign(d_psi) * (PI / 2)
+    ratio = k * ((np.absolute(d_theta / theta) + c) / (np.absolute(d_psi) + c) - 1)
+    sigmoid = 1 / (1 + np.exp(20 * (np.absolute(beta) - 1.3)))
+    a_mag = ratio * sigmoid # multiply a sigmoid function of beta
+    return alpha, a_mag
+    
+    
+    
+    
     

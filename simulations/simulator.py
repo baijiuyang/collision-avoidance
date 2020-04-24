@@ -65,6 +65,7 @@ class Simulation:
             save (bool): Flag for saving the animation in the current working directory.
         '''
         if not interval: interval = 1000 / self.Hz # real time
+        
         # Create a figure
         fig = plt.figure(figsize=(7,7))
         ax = plt.axes(xlim=(-12, 12), ylim=(-12, 12))
@@ -115,7 +116,10 @@ class Simulation:
         pass
         
     def plot_speeds(self):
-        pass
+        fig = plt.figure()
+        ax = plt.axes(ylim=(0, 2))
+        speed = np.diff(norm(self.p[1], axis=-1))
+        ax.plot(t[:-1], speed)
     
 class Agent:
     '''
@@ -135,7 +139,7 @@ class Agent:
         ref (2-d vector): The allocentric reference axis.
         constant (bool): Whether this agent has constant state.
     '''
-    def __init__(self, id, init_state, goal_id=None, w=None, p_spd=None, model_names=None, model_args=None, constant=False, ref=[0, 1]):
+    def __init__(self, id, init_state=None, goal_id=None, w=None, p_spd=None, models=None, constant=False, ref=[0, 1]):
         '''
         This constructor initialize an agent (1) through vectoral velocity and acceleration or
         (2) through speed, phi (orientation given ref as the allocentric reference axis), d_phi
@@ -150,14 +154,8 @@ class Agent:
         self.ref = [i / norm(ref) for i in ref]
         self.p_spd = p_spd
         self.constant = constant
-        self.p = init_state['p']
-        if 'v' in init_state:
-            self.v = init_state['v']
-            self.s, self.phi = v2sp(self.v, ref=self.ref)
-        else:
-            self.s = init_state['s']
-            self.phi = init_state['phi']
-            self.v = sp2v(self.s, self.phi, ref=self.ref)
+        if init_state:
+            self.set_init_state(init_state)
         self.a = [0, 0]
         self.d_s = 0
         self.d_phi = 0
@@ -167,9 +165,19 @@ class Agent:
         self.d_s_next = 0
         self.dd_phi_next = 0
         if not self.constant:
-            for name, args in zip(model_names, model_args):
-                self.models[name] = Model(name, args, self.ref)
-
+            for model in models:
+                self.models[model['name']] = Model(model, self.ref)
+                
+    def set_init_state(self, init_state):
+        self.p = init_state['p']
+        if 'v' in init_state:
+            self.v = init_state['v']
+            self.s, self.phi = v2sp(self.v, ref=self.ref)
+        else:
+            self.s = init_state['s']
+            self.phi = init_state['phi']
+            self.v = sp2v(self.s, self.phi, ref=self.ref)
+            
     def interact_pairwise(self, source):
         '''
         Computes vector acceleration caused by one source based on the models.
@@ -249,7 +257,8 @@ class Agent:
         
         # Debug log
         # if self.id == 1:
-            # print(self.p, self.v, self.a, self.s, self.phi, self.d_s, self.d_phi, self.dd_phi)
+            # states = [self.phi, self.d_phi, self.dd_phi]
+            # print(np.round(states, decimals=2))
         
         
         
