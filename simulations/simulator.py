@@ -67,19 +67,32 @@ class Simulation:
         if not interval: interval = 1000 / self.Hz # real time
         
         # Create a figure
-        fig = plt.figure(figsize=(7,7))
-        ax = plt.axes(xlim=(-12, 12), ylim=(-12, 12))
-        # Set the aspect ratio of x and y axis equal to the true value
-        ax.set_aspect('equal')
-        
-        # Initialize data
+        fig0 = plt.figure(num=0, figsize=(14,7))
+        # Create speed plot
+        ax0 = fig0.add_subplot(121)
+        ax0.set_ylim(0.25, 1.75)
+        ax0.set_xlabel('time (s)')
+        ax0.set_ylabel('speed (m/s)')
+        ax0.set_title('Speed')
+        for id, s in self.get_s().items():
+            ax0.plot(self.t, s, label=str(id))
+        ax0.legend()
+        time_bar, = ax0.plot([self.t[0], self.t[0]], ax0.get_ylim(), color=(0.7, 0.7, 0.7))
+        # Create path plot
+        ax1 = fig0.add_subplot(122)
+        ax1.set_xlim(-12, 12)
+        ax1.set_ylim(-12, 12)
+        ax1.set_xlabel('postion x (m)')
+        ax1.set_ylabel('postion y (m)')
+        ax1.set_title('Path')
+        ax1.set_aspect('equal') # Use the true ratio of x and y axis
         agents, circles, ws, ids = [], [], [], []
         angles = np.linspace(0, 2 * math.pi, num=12) # Use 12 points to approximate a circle
         for i, traj in self.p.items():
             w = self.agents[i].w if self.agents[i].w else 0.1
             circle = np.stack((w / 2 * cos(angles), w / 2 * sin(angles)), axis=-1) # 12 points on the perimeter
-            agent, = ax.plot(traj[0][0] + circle[:, 0], traj[0][1] + circle[:, 1])
-            ax.plot([p[0] for p in traj], [p[1] for p in traj], color=agent.get_color()) # Plot trajectory
+            agent, = ax1.plot(traj[0][0] + circle[:, 0], traj[0][1] + circle[:, 1])
+            ax1.plot([p[0] for p in traj], [p[1] for p in traj], color=agent.get_color()) # Plot trajectory
             agents.append(agent)
             ws.append(w)
             circles.append(circle)
@@ -92,10 +105,13 @@ class Simulation:
             '''
             for agent, circle, id in zip(agents, circles, ids):
                 agent.set_data(self.p[id][i][0] + circle[:, 0], self.p[id][i][1] + circle[:, 1])
-            return agents
+            time_bar.set_data([self.t[i], self.t[i]], ax0.get_ylim())
+            lines = agents[:]
+            lines.append(time_bar)
+            return lines
         
         # call the animator.  blit=True means only re-draw the parts that have changed.
-        anim = animation.FuncAnimation(fig, animate, frames=len(self.t), interval=interval, blit=True)
+        anim = animation.FuncAnimation(fig0, animate, frames=len(self.t), interval=interval, blit=True)
 
         # save the animation as an mp4.  This requires ffmpeg or mencoder to be
         # installed.  The extra_args ensure that the x264 codec is used, so that
@@ -108,18 +124,35 @@ class Simulation:
             t = "-".join(t)
             filename = 'simulation' + t + '.mp4'
             anim.save(filename)
-        return anim
+        return fig0, anim
         # For command line usage
         # plt.show()
-
-    def plot_positions(self):
-        pass
+    
+    def get_v(self):
+        vs = {}
+        for id, p in self.p.items():
+            vs[id] = np.gradient(p, axis=0) * self.Hz
+        return vs
         
-    def plot_speeds(self):
-        fig = plt.figure()
-        ax = plt.axes(ylim=(0, 2))
-        speed = np.diff(norm(self.p[1], axis=-1))
-        ax.plot(t[:-1], speed)
+    def get_s(self):
+        ss = {}
+        vs = self.get_v()
+        for id, v in vs.items():
+            ss[id] = norm(v, axis=-1)
+        return ss
+    
+    def plot_speeds(self, hide=False):
+        speeds = self.get_s()
+        fig = plt.figure(num=1, figsize=(7,7))
+        ax = fig.add_subplot(111)
+        ax.set_ylim(0.25, 1.75)
+        ax.set_xlabel('time (s)')
+        ax.set_ylabel('speed (m/s)')
+        for id, s in speeds.items():
+            ax.plot(self.t, s, label=str(id))
+        ax.legend()
+        return fig
+        
     
 class Agent:
     '''
