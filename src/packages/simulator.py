@@ -12,7 +12,7 @@ from matplotlib import gridspec, animation, pyplot as plt
 import math
 
 
-class Simulation:
+class Simulator:
     '''
     This class provides animiation, trajectory plots, variable plots functions.
     
@@ -20,7 +20,7 @@ class Simulation:
         t (list of floats): Time stamps in seconds.
         p, v, a, phi, d_phi, dd_phi, d_s ({agent.id: 2-d list of float}): Time series of positions, velocities, accelerations,
             heading, 1st order d of heading, 2nd order d of heading, 1st order d of speed.
-        agents (Object of Agent class): See definition in Agent class.
+        agents (list of Agent object): See definition in Agent class.
         Hz (int): Temporal frequency of the simulation.
     '''
     def __init__(self, agents, Hz):
@@ -50,7 +50,7 @@ class Simulation:
         for agent in self.agents.values():
             agent.move(Hz)
             # Record new states
-            self.p[agent.id].append(agent.p[:])
+            self.p[agent.id].append((agent.p[0], agent.p[1]))
 
     def simulate(self, t_total, Hz=None):
         if not Hz: Hz = self.Hz
@@ -72,7 +72,7 @@ class Simulation:
                          width_ratios=[1, 1, 2])
         # Create speed plot
         ax0 = fig0.add_subplot(spec[0])
-        ax0.set_ylim(0, 1.75)
+        ax0.set_ylim(0, 2.0)
         ax0.set_xlabel('time (s)')
         ax0.set_ylabel('speed (m/s)')
         ax0.set_title('Speed')
@@ -188,39 +188,42 @@ class Agent:
         s, phi (float): The current speed and heading.
         d_s, d_phi (float): The current rate of change of speed and heading.
         a, dd_phi (float): Acceleration and derivative of d_phi from the output of different models.
-        p_spd (float): The preferred speed of the agent.
         approach_model, avoid_model (Model objects): See Model class in models.py.
         ref (2-d vector): The allocentric reference axis.
         constant (bool): Whether this agent has constant state.
     '''
-    def __init__(self, id, init_state=None, goal_id=None, w=None, p_spd=None, models=None, constant=False, ref=[0, 1]):
+    def __init__(self, id, init_state=None, goal_id=None, w=None, models=None, constant=False, ref=[0, 1]):
         '''
         This constructor initialize an agent (1) through vectoral velocity and acceleration or
         (2) through speed, phi (orientation given ref as the allocentric reference axis), d_phi
         
         Args:
             models (dict): {'approach': [model dict], 'avoid': [model dict]}. Model dict has the format of 
-                {'name': '[model name]', 'type': ['approach' or 'avoid'], '[parameter1]': [para1], ...}.
+                {'name': '[model name]', 'type': 'approach' or 'avoid', '[parameter1]': [para1], ...}.
             init_state (dict): {'p': p0, 'v': v0, 's': s0, 'phi': phi0}
         '''
         self.id = id
         self.goal_id = goal_id
         self.w = w
         self.ref = [i / norm(ref) for i in ref]
-        self.p_spd = p_spd
         self.constant = constant
         if init_state:
             self.set_state(init_state)
-        self.a = [0, 0]
-        self.d_s = 0
-        self.d_phi = 0
-        self.dd_phi = 0
-        self.a_next = [0, 0]
-        self.d_s_next = 0
-        self.dd_phi_next = 0
         if not self.constant:
-            self.approach_model = Model(models['approach'], self.ref) if models['approach'] else None
-            self.avoid_model = Model(models['avoid'], self.ref) if models['avoid'] else None
+            self.approach_model = Model(models['approach'], self.ref) if models and 'approach' in models else None
+            self.avoid_model = Model(models['avoid'], self.ref) if models and 'avoid' in models else None
+        
+    def set_approach_model(self, model):
+        if not self.approach_model:
+            self.approach_model = Model(model, self.ref)
+        else:
+            self.approach_model.change_model(model)
+        
+    def set_avoid_model(self, model):
+        if not self.avoid_model:
+            self.avoid_model = Model(model, self.ref)
+        else:
+            self.avoid_model.change_model(model)
         
     def set_state(self, init_state):
         self.p = init_state['p']
@@ -231,7 +234,16 @@ class Agent:
             self.s = init_state['s']
             self.phi = init_state['phi']
             self.v = sp2v(self.s, self.phi, ref=self.ref)
-            
+        self.a = init_state.get('a', [0, 0])
+        self.d_s = init_state.get('d_s', 0)
+        self.d_phi = init_state.get('d_phi', 0)
+        self.dd_s = 0
+        self.dd_phi = 0
+        self.a_next = [0, 0]
+        self.d_s_next = 0
+        self.dd_s_next = 0
+        self.dd_phi_next = 0
+        
     def interact_pairwise(self, source):
         '''
         Computes vector acceleration caused by one source based on the models.
@@ -250,26 +262,25 @@ class Agent:
         inputs['v1'] = source.v
         inputs['s0'] = self.s
         inputs['phi'] = self.phi
+        inputs['d_s'] = self.d_s
         inputs['d_phi'] = self.d_phi
         inputs['w'] = source.w
         pred_sum = {}
         preds = []
         # Do not interact with self or if self is constant
         if source.id == self.id or self.constant: 
-            return None
-        
-        source_type = ''
+            return
+        # print(inputs)
         if source.id == self.goal_id:
-            source_type += 'g' # goal
             preds.append(self.approach_model(inputs))
-        if source.w:
-            source_type += 'o' # obstacle
+            # print('goal: ', preds[-1])
+        else:
             preds.append(self.avoid_model(inputs))
-            
+            # print('obst: ', preds[-1])
         # Combine the influences of all models
         for pred in preds:
             for key, val in pred.items():
-                pred_sum[key] = pred_sum.get(key, 0) + val if val != None else None
+                pred_sum[key] = pred_sum.get(key, 0) + val
         return pred_sum
         
     def interact(self, sources):
@@ -283,16 +294,22 @@ class Agent:
 
         # Gather the influence of all sources in backstage
         for source in sources:
-            src = self.interact_pairwise(source)
-            if not src: continue
-            if src['d_s'] == None:
-                self.a_next[0] += src['ax']
-                self.a_next[1] += src['ay']
+            pred_sum = self.interact_pairwise(source)
+            if not pred_sum: continue
+            if 'dd_phi' not in pred_sum:
+                self.a_next[0] += pred_sum['ax']
+                self.a_next[1] += pred_sum['ay']
                 self.d_s_next = None
+                self.dd_s_next = None
                 self.dd_phi_next = None
             else:
-                self.d_s_next += src['d_s']
-                self.dd_phi_next += src['dd_phi']
+                if 'd_s' in pred_sum:
+                    self.d_s_next += pred_sum['d_s']
+                    self.dd_s_next = None
+                else:
+                    self.dd_s_next += pred_sum['dd_s']
+                    self.d_s_next = None
+                self.dd_phi_next += pred_sum['dd_phi']
                 self.a_next = None
                 
     def move(self, Hz):
@@ -310,16 +327,25 @@ class Agent:
         if self.constant:
             return
             
-        # Update by d_s, dd_phi
-        if self.d_s_next != None:
-            self.s += self.d_s * dt
+        # Update by d_s, dd_s and dd_phi
+        if self.dd_phi_next != None:
+            # Apply d_s, d_phi
+            self.s += self.d_s * dt            
             self.phi += self.d_phi * dt
-            self.v = sp2v(self.s, self.phi, ref=self.ref)        
-            # Apply backstage influence then clear them
-            self.d_s, self.dd_phi = self.d_s_next, self.dd_phi_next
-            self.d_s_next, self.dd_phi_next = 0, 0
-            # Apply dd_phi to d_phi
+            self.v = sp2v(self.s, self.phi, ref=self.ref)
+            # Apply dd_phi and dd_s
             self.d_phi += self.dd_phi * dt
+            self.d_s += self.dd_s * dt
+            # Apply backstage influence then clear them
+            if self.d_s_next != None:
+                self.d_s = self.d_s_next
+                self.d_s_next = 0
+            else:
+                self.dd_s = self.dd_s_next
+                self.dd_s_next = 0
+            self.dd_phi = self.dd_phi_next
+            self.dd_phi_next = 0
+            
         # Update by a
         else:
             self.v[0] += self.a[0] * dt

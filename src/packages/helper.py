@@ -4,11 +4,23 @@
 
 import numpy as np
 from numpy.linalg import norm
-from numpy import sqrt, sin, cos, arccos, arcsin, arctan
+from numpy import sqrt, sin, cos, arccos, arcsin, arctan, gradient
 import math
-from matplotlib import animation, pyplot as plt
+from matplotlib import animation, pyplot as plt, gridspec
 import time
 
+def hms(seconds, delimiter=':'):
+    seconds = int(seconds)
+    h = f'{seconds // 3600:d}'
+    m = f'{seconds % 3600 // 60:02d}'
+    s = f'{seconds % 3600 % 60:02d}'
+    return delimiter.join((h,m,s))
+    
+def ymdhms(delimiter='-'):
+    t = time.localtime()
+    t = [str(i) for i in t[:6]]
+    return delimiter.join(t)
+    
 def inner(x, y):
     '''
     A wraper for numpy.inner() to make it be able to compute element wise
@@ -34,7 +46,10 @@ def d_dist(p0, p1, v0, v1):
         return ((p1[0] - p0[0]) * (v1[0] - v0[0]) + (p1[1] - p0[1]) * (v1[1] - v0[1])) / dist(p0, p1)
     else:
         return ((p1[:, 0] - p0[:, 0]) * (v1[:, 0] - v0[:, 0]) + (p1[:, 1] - p0[:, 1]) * (v1[:, 1] - v0[:, 1])) / dist(p0, p1)
-    
+
+def traj_speed(traj, Hz):
+    return norm(gradient(traj, axis=0) * Hz, axis=-1)
+
 def d_speed(v, a):
     '''
     Computes the derivative of speed as a scaler.
@@ -122,11 +137,13 @@ def v2sp(v, ref=[0, 1]):
     if len(np.shape(v)) == 1:
         return _v2sp(v, ref)
     else:
+        v_shape = np.shape(v)
+        v = np.reshape(v, (int(np.size(v)/2), 2))
         ss = np.zeros(len(v))
         phis = np.zeros(len(v))
         for i in range(len(v)):
             ss[i], phis[i] = _v2sp(v[i], ref)
-        return ss, phis
+        return np.reshape(ss, v_shape[:-1]), np.reshape(phis, v_shape[:-1])
 
 def sp2a(s, d_s, phi, d_phi, ref=[0, 1]):
     '''
@@ -226,6 +243,8 @@ def d_theta(p0, p1, v0, v1, w):
     if len(np.shape(p0)) == 1:
         return _d_theta(p0, p1, v0, v1, w)
     else:
+        if len(np.shape(w)) == 0:
+            w = [w] * len(p0)
         REs = np.zeros(len(p0))
         for i in range(len(REs)):
             REs[i] = _d_theta(p0[i], p1[i], v0[i], v1[i], w[i])
@@ -428,7 +447,7 @@ def broken_sigmoid(x, a=1, b=20):
 
 def min_sep(p0, p1, v0, v1):
     '''
-    This function computes the minimum separation or distance at closest approach (dca) 
+    This function computes the projected minimum separation or distance at closest approach (dca) 
     and time to minimum separation or time to closest approach (ttca) of two trajectiles.
     
     Args:
@@ -453,8 +472,31 @@ def min_sep(p0, p1, v0, v1):
         dca *= -1
     return dca, ttca
     
+def min_dist(traj0, traj1):
+    '''
+    Computes the signed minimum distance between two trajectories.
     
-    
+    Return:
+        inx (int): The index of the minimum distance.
+        (float): The signed minimum distance in meter.
+    '''
+    traj0 = np.array(traj0)
+    traj1 = np.array(traj1)
+    dists = dist(traj0, traj1)
+    inx = np.argmin(dists)
+    if inx == len(dists) - 1:
+        inx -= 1
+    min_d = dists[inx]
+    p0 = traj0[inx]
+    p1 = traj1[inx]
+    v0 = traj0[inx + 1] - traj0[inx]
+    v1 = traj1[inx + 1] - traj1[inx]
+    v0T = [v0[1], -v0[0]]
+    beta_sign = np.sign(inner(p1 - p0, v0T))    
+    if np.sign(inner(v1, v0T)) == beta_sign:
+        min_d = -min_d
+    return inx, min_d
+
 def collision_trajectory(beta, side, spd1=1.3, w=1.5, r=10, r_min=0, Hz=100, animate=False, interval=None, save=False):
     '''
     This function produces near-collision trajectories of circular agents 0 and 1 with 
@@ -514,34 +556,77 @@ def collision_trajectory(beta, side, spd1=1.3, w=1.5, r=10, r_min=0, Hz=100, ani
     
     return traj0, traj1, np.tile(v0, (n, 1)), np.tile(v1, (n, 1))
     
-def play_trajs(trajs, ws, Hz, colors=None, interval=None, save=False):
+def play_trajs(trajs, ws, Hz, ref=[0,1], labels=None, colors=None, interval=None, save=False):
     '''
     trajs (2-d np array)
     '''
+    trajs = np.array(trajs)
     if not interval: interval = 1000 / Hz
     if not colors: colors = [None] * len(trajs)
     # Create a figure
-    fig = plt.figure(figsize=(7, 7))
-    ax = plt.axes(xlim=(-12, 12), ylim=(-12, 12))
-    ax.set_aspect('equal')
+    fig = plt.figure(figsize=(15, 7))
+    spec = gridspec.GridSpec(ncols=3, nrows=1,
+                         width_ratios=[1, 1, 2])
     
-    # Initialize plots
+    # Create speed plot
+    ax0 = fig.add_subplot(spec[0])
+    ax0.set_ylim(0, 2.0)
+    ax0.set_xlabel('time (s)')
+    ax0.set_ylabel('speed (m/s)')
+    ax0.set_title('Speed')
+    for id, traj in enumerate(trajs):
+        if labels:
+            id = labels[id]
+        s = traj_speed(traj, Hz)
+        t = np.linspace(0, len(traj)-1, len(traj)) / Hz
+        ax0.plot(t, s, label=str(id))
+    ax0.legend()
+    time_bar0, = ax0.plot([t[0], t[0]], ax0.get_ylim(), color=(0.7, 0.7, 0.7))
+    # Create heading plot
+    ax1 = fig.add_subplot(spec[1])
+    ax1.set_ylim(-3.2, 3.2)
+    ax1.set_xlabel('time (s)')
+    ax1.set_ylabel('heading (radian)')
+    ax1.set_title('Heading')
+    for id, traj in enumerate(trajs):
+        if labels:
+            id = labels[id]
+        phi = v2sp(np.gradient(traj, axis=0) * Hz, ref=ref)[1]
+        ax1.plot(t, phi, label=str(id))
+    ax1.legend()
+    time_bar1, = ax1.plot([t[0], t[0]], ax1.get_ylim(), color=(0.7, 0.7, 0.7))
+    # Create path plot
+    ax2 = fig.add_subplot(spec[2])
+    ax2.set_xlim(-12, 12)
+    ax2.set_ylim(-12, 12)
+    ax2.set_xlabel('postion x (m)')
+    ax2.set_ylabel('postion y (m)')
+    ax2.set_title('Path')
+    ax2.set_aspect('equal')    
     angles = np.linspace(0, 2 * math.pi, num=12)
     circles = []
     agents = []
-
-    for traj, w, color in zip(trajs, ws, colors):
+    ids = list(range(len(trajs)))
+    for id, traj, w, color in zip(ids, trajs, ws, colors):
+        w = 0 if not w else w
+        if labels:
+            id = labels[id]
         circle = np.stack((w / 2 * cos(angles), w / 2 * sin(angles)), axis=-1)
-        agent, = ax.plot(traj[0, 0] + circle[:, 0], traj[0, 1] + circle[:, 1], color=color)
-        ax.plot([p[0] for p in traj], [p[1] for p in traj], color=agent.get_color()) # Plot trajectory
+        agent, = ax2.plot(traj[0, 0] + circle[:, 0], traj[0, 1] + circle[:, 1], color=color)
+        ax2.plot([p[0] for p in traj], [p[1] for p in traj], color=agent.get_color(), label=str(id)) # Plot trajectory
         agents.append(agent)
         circles.append(circle)
 
     def animate(i):
         # ms is the short for markersize
         for agent, traj, circle in zip(agents, trajs, circles):
-            agent.set_data(traj[i][0] + circle[:, 0], traj[i][1] + circle[:, 1])
-        return agents
+            agent.set_data(traj[i, 0] + circle[:, 0], traj[i, 1] + circle[:, 1])
+        time_bar0.set_data([t[i], t[i]], ax0.get_ylim())
+        time_bar1.set_data([t[i], t[i]], ax1.get_ylim())
+        lines = agents[:]
+        lines.append(time_bar0)
+        lines.append(time_bar1)
+        return lines
 
     # call the animator.  blit=True means only re-draw the parts that have changed.
     anim = animation.FuncAnimation(fig, animate, frames=len(trajs[0]), interval=interval, blit=True)
@@ -551,10 +636,8 @@ def play_trajs(trajs, ws, Hz, colors=None, interval=None, save=False):
         # your system: for more information, see
         # http://matplotlib.sourceforge.net/api/animation_api.html
     if save:
-        t = time.localtime()
-        t = [str(i) for i in t[:6]]
-        t = "-".join(t)
-        filename = 'play_trial' + t + '.mp4'
+        t_stamp = ymdhms()
+        filename = 'play_trial' + t_stamp + '.mp4'
         anim.save(filename)
     return anim
     
