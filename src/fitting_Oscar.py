@@ -13,7 +13,6 @@ from packages import data_container
 sys.modules['data_container'] = data_container
 import math
 from pathlib import Path
-import cProfile
 
 def process_func(job):
     global tester, _total_jobs, _outfile, X
@@ -46,15 +45,12 @@ def process_func(job):
         file.write(line + '\n')
         
     toc = time.perf_counter()
-    print(f'{os.getpid():d} spent {hms(toc - tic):s} on ', job)
+    # print(f'{os.getpid():d} spent {hms(toc - tic):s} on ', job)
     progress = sum(1 for i in open(_outfile, 'rb')) * 100.0 / _total_jobs
     # if progress >= 20000:
         # _outfile = _outfile[:-4] + X + '.csv'
         # X += 'X'
-    print(f'======%{progress:0.1f} done======')
-
-def process_func_wrap(job):
-    cProfile.runctx("process_func(job)", globals(), locals())
+    # print(f'======%{progress:0.1f} done======')
         
 def process_init(goals, obsts, subjs, info, Hz, total_jobs, outfile):
     global tester, _total_jobs, _outfile, X
@@ -75,14 +71,14 @@ def Cohen_movObst_exp1():
                             [7.5],
                             [0.4],
                             [0.4],
-                            np.linspace(1, 4, 2).round(2),
-                            np.linspace(400, 600, 2).round(2),
-                            np.linspace(1, 4, 2).round(2), 
-                            np.linspace(1, 4, 1).round(2),
-                            np.linspace(1, 4, 1).round(2),
-                            np.linspace(100, 400, 1).round(2),
-                            np.linspace(6, 9, 1).round(2),
-                            np.linspace(1, 4, 1).round(2)))
+                            np.linspace(1, 4, 4).round(2),
+                            np.linspace(400, 600, 4).round(2),
+                            np.linspace(1, 4, 4).round(2), 
+                            np.linspace(1, 4, 4).round(2),
+                            np.linspace(1, 4, 4).round(2),
+                            np.linspace(100, 400, 4).round(2),
+                            np.linspace(6, 9, 4).round(2),
+                            np.linspace(1, 4, 4).round(2)))
     metrics = ['p_dist', 's_RMSE', 'phi_RMSE']
     job_list = []
     for vals in arg_vals:
@@ -182,17 +178,23 @@ if __name__ == "__main__":
 
     tic = time.perf_counter()    
     # Initialize inputs
-    n_worker = os.cpu_count()
-
+    # n_worker = os.cpu_count()
+    n_worker = int(os.environ["SLURM_JOB_CPUS_PER_NODE"])
     job_list, goals, obsts, subjs, info, Hz, data_name = fitting_func()
     t = ymdhms()
     outfile = 'fitting_results_' + data_name + '_' + t + '.csv'
     
+    # For running on Brown CCV
+    home = str(Path.home())
+    outfile = os.path.abspath(os.path.join(home,
+                                           'scratch',
+                                           outfile))
+    
     total_jobs = len(job_list)
     initargs = (goals, obsts, subjs, info, Hz, total_jobs, outfile)    
     # Run jobs
-    print('Start testing')
+    # print('Start testing')
     with multiprocessing.Pool(processes=n_worker, initializer=process_init, initargs=initargs) as pool:
-        pool.map(process_func_wrap, job_list)
+        pool.map(process_func, job_list)
     toc = time.perf_counter()
-    print(f'A total time of {hms(toc - tic):s} was spent on {total_jobs:d} iterations ({hms((toc - tic)/total_jobs):s}/iter)')
+    # print(f'A total time of {hms(toc - tic):s} was spent on {total_jobs:d} iterations ({hms((toc - tic)/total_jobs):s}/iter)')

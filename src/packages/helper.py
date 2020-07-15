@@ -1,13 +1,15 @@
 # This module contains all the helper functions for the dissertation research of Jiuyang Bai
 # on the control law of pedestrian collision avoidance, please contact baijiuyang@hotmail.com
 # for support. Github: https://github.com/baijiuyang/collision-avoidance.git
-
+import time
+import math
 import numpy as np
 from numpy.linalg import norm
 from numpy import sqrt, sin, cos, arccos, arcsin, arctan, gradient
-import math
 from matplotlib import animation, pyplot as plt, gridspec
-import time
+import matplotlib.cm as cmx
+from matplotlib.colors import Normalize
+from mpl_toolkits.mplot3d import Axes3D
 
 def hms(seconds, delimiter=':'):
     seconds = int(seconds)
@@ -478,7 +480,8 @@ def min_dist(traj0, traj1):
     
     Return:
         inx (int): The index of the minimum distance.
-        (float): The signed minimum distance in meter.
+        min_d (float): The signed minimum distance in meter.
+            Positive means traj0 passing in front of traj1. 
     '''
     traj0 = np.array(traj0)
     traj1 = np.array(traj1)
@@ -641,5 +644,19 @@ def play_trajs(trajs, ws, Hz, ref=[0,1], labels=None, colors=None, interval=None
         anim.save(filename)
     return anim
     
-    
+def scatter3d(x, y, z, cs=None, colorsMap='gist_rainbow', fig=None, ax=None):
+    '''
+    Plots scatter plot in 3d. Has the option of color coding the z value.
+    '''
+    assert len(x) == len(z) and len(y) == len(z), "x, y, and z do not have the same size."
+    if not cs: cs = z
+    if not fig: fig = plt.figure()
+    if not ax: ax = Axes3D(fig)
+    cm = plt.get_cmap(colorsMap)
+    cNorm = Normalize(vmin=min(cs), vmax=max(cs))
+    scalarMap = cmx.ScalarMappable(norm=cNorm, cmap=cm)
+    ax.scatter(x, y, z, c=scalarMap.to_rgba(cs))
+    scalarMap.set_array(cs)
+    fig.colorbar(scalarMap)
+
     

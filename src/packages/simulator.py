@@ -199,7 +199,7 @@ class Agent:
         
         Args:
             models (dict): {'approach': [model dict], 'avoid': [model dict]}. Model dict has the format of 
-                {'name': '[model name]', 'type': 'approach' or 'avoid', '[parameter1]': [para1], ...}.
+                {'name': '[model name]', '[parameter1]': [para1], ...}.
             init_state (dict): {'p': p0, 'v': v0, 's': s0, 'phi': phi0}
         '''
         self.id = id

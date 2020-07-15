@@ -61,7 +61,7 @@ class Tester:
             source.v = ((goal[1][0] - goal[0][0]) * self.Hz, (goal[1][1] - goal[0][1]) * self.Hz)
             goal_scrs.append(source)
         for i, obst in enumerate(obsts):
-            source = Agent(-1, constant=True)
+            source = Agent(i + 2, constant=True)
             source.w = self.info['w']['obsts'][i]
             source.p = obst[0][:]
             source.v = ((obst[1][0] - obst[0][0]) * self.Hz, (obst[1][1] - obst[0][1]) * self.Hz)
@@ -88,7 +88,10 @@ class Tester:
         for i in range(len(self.subjs)):
             # Get preferred speed from data
             if 'ps' in self.info:
-                self.agent.approach_model.args['ps'] = self.info['ps'][i]
+                if self.agent.approach_model:
+                    self.agent.approach_model.args['ps'] = self.info['ps'][i]
+                if self.agent.avoid_model:
+                    self.agent.avoid_model.args['ps'] = self.info['ps'][i]
             # Get initial state from data
             v0 = [(a - b) * self.Hz for a, b in zip(self.subjs[i][1], self.subjs[i][0])]
             v1 = [(a - b) * self.Hz for a, b in zip(self.subjs[i][2], self.subjs[i][1])]
@@ -120,6 +123,13 @@ class Tester:
         return subjs, preds
     
     def test(self, metric, i_trial=None):
+        '''
+        Metric has the format of "var_alg". Var can be 'p': position,
+        'v': velocity, 'a': acceleration, 's': speed, 'phi': heading, or
+        'dca': signed distance of the closest approach. Alg can be
+        'dist': average distance, 'MAE': mean absolute error, 'MSE': mean
+        squared error, or 'RMSE': root mean squared error.
+        '''
         if not self.p_pred: self.simulate()
         Hz = self.Hz
         var = metric.split('_')[0]

@@ -52,14 +52,15 @@ class Model:
             r = dist(p0, p1)
             pred['d_s'], pred['dd_phi'] = mass_spring_approach(
                 s0, phi, d_phi, psi, r, 
-                args['ps'], args['t_relax'], args['b'], args['k_g'], args['c_1'], args['c_2'])
+                args['ps'], args['t_relax'], args['b'], args['k_g'], args['c1'], args['c2'])
         
         elif self.name == 'mass_spring_approach1':
             psi = helper.psi(p0, p1, ref=self.ref)
             r = dist(p0, p1)
             pred['dd_s'], pred['dd_phi'] = mass_spring_approach1(
                 s0, phi, d_s, d_phi, psi, r, 
-                args['ps'], args['b_1'], args['b_2'], args['k_1'], args['k_2'], args['c_1'], args['c_2'])
+                args['ps'], args['b1'], args['k1'] , args['c1'],
+                args['b2'], args['k2'], args['c2'])
         
         elif self.name == 'vector_approach':
             a = vector_approach(p0, p1, v0, args['ps'], args['t_relax'])
@@ -107,7 +108,8 @@ class Model:
             r = dist(p0, p1)
             pred['d_s'], pred['dd_phi'] = cohen_avoid(
                 beta, d_psi, d_phi, r, s0, 
-                args['ps'], args['b'], args['k_mo'], args['c_5'], args['c_6'])
+                args['ps'], args['b1'], args['k1'], args['c5'], args['c6'],
+                args['b2'], args['k2'], args['c7'], args['c8'])
             
         elif self.name == 'cohen_avoid2':
             beta = helper.beta(p0, p1, v0)
@@ -115,7 +117,7 @@ class Model:
             d_psi = helper.d_psi(p0, p1, v0, v1)
             pred['d_s'], pred['dd_phi'] = cohen_avoid2(
                 beta, d_theta, d_psi, d_phi, s0, 
-                args['ps'], args['b'], args['k_mo'], args['c_5'], args['c_6'])
+                args['ps'], args['b'], args['k'], args['c5'], args['c6'])
         
         elif self.name == 'cohen_avoid3':
             beta = helper.beta(p0, p1, v0)
@@ -123,7 +125,8 @@ class Model:
             d_psi = helper.d_psi(p0, p1, v0, v1)
             pred['dd_s'], pred['dd_phi'] = cohen_avoid3(
                 beta, d_theta, d_psi, 
-                args['k_1'], args['k_2'], args['c_5'], args['c_6'], args['c_7'], args['c_8'])
+                args['k1'], args['c5'], args['c6'], 
+                args['k2'], args['c7'], args['c8'])
         
         elif self.name == 'cohen_avoid4':
             beta = helper.beta(p0, p1, v0)
@@ -131,20 +134,21 @@ class Model:
             d_psi = helper.d_psi(p0, p1, v0, v1)
             pred['dd_s'], pred['dd_phi'] = cohen_avoid4(
                 beta, d_theta, d_psi, 
-                args['k_1'], args['k_2'], args['c_5'], args['c_6'], args['c_7'], args['c_8'])
+                args['k1'], args['c5'], args['c6'], 
+                args['k2'], args['c7'], args['c8'])
             
             
         return pred
         
         
-def mass_spring_approach(s0, phi, d_phi, psi, r, ps, t_relax, b, k_g, c_1, c_2):
+def mass_spring_approach(s0, phi, d_phi, psi, r, ps, t_relax, b, k_g, c1, c2):
     d_s = (ps - s0) / t_relax
-    dd_phi = -b * d_phi - k_g * (phi - psi) * (np.exp(-c_1 * r) + c_2)
+    dd_phi = -b * d_phi - k_g * (phi - psi) * (np.exp(-c1 * r) + c2)
     return d_s, dd_phi
 
-def mass_spring_approach1(s0, phi, d_s, d_phi, psi, r, ps, b1, b2, k1, k2, c_1, c_2):
+def mass_spring_approach1(s0, phi, d_s, d_phi, psi, r, ps, b1, k1, c1, b2, k2, c2):
     dd_s = -b2 * d_s + k2 * (ps - s0)
-    dd_phi = -b1 * d_phi - k1 * (phi - psi) * (np.exp(-c_1 * r) + c_2)
+    dd_phi = -b1 * d_phi - k1 * (phi - psi) * (np.exp(-c1 * r) + c2)
     return dd_s, dd_phi
 
 def vector_approach(p0, p1, v0, ps, t_relax):
@@ -177,25 +181,25 @@ def perpendicular_acceleration_avoid(beta, psi, theta, d_theta, d_psi, k, c):
     a_mag = ratio * sigmoid # multiply a sigmoid function of beta
     return alpha, a_mag
     
-def cohen_avoid(beta, d_psi, d_phi, r, s0, ps, b, k, c5, c6):
+def cohen_avoid(beta, d_psi, d_phi, r, s0, ps, b1, k1, c5, c6, b2, k2, c7, c8):
     step = (np.sign(PI / 2 - np.absolute(beta)) + 1) / 2
-    d_s = -b * (s0 - ps) + k * d_psi * np.exp(-c5 * np.absolute(d_psi) - c6 * r) * step
-    dd_phi = -b * d_phi - k * d_psi * np.exp(-c5 * np.absolute(d_psi) - c6 * r) * step
+    d_s = -b2 * (s0 - ps) + k2 * np.sign(beta) *d_psi * np.exp(-c7 * np.absolute(d_psi) - c8 * r) * step
+    dd_phi = -b1 * d_phi - k1 * d_psi * np.exp(-c5 * np.absolute(d_psi) - c6 * r) * step
     return d_s, dd_phi
     
-def cohen_avoid2(beta, d_theta, d_psi, d_phi, s0, ps, b, k, c5, c6):
+def cohen_avoid2(beta, d_theta, d_psi, d_phi, s0, ps, b1, k1, c5, c6, b2, k2, c7, c8):
     sigmoid = 1 / (1 + np.exp(20 * (np.absolute(beta) - 1.3)))
-    d_s = -b * (s0 - ps) + d_psi * k * np.exp(-c5 * np.absolute(d_psi)) * (1 - np.exp(-c6 * np.maximum(0, d_theta))) * sigmoid
-    dd_phi = -b * d_phi - d_psi * k * np.exp(-c5 * np.absolute(d_psi)) * (1 - np.exp(-c6 * np.maximum(0, d_theta))) * sigmoid
+    d_s = -b2 * (s0 - ps) + d_psi * k2 * np.exp(-c7 * np.absolute(d_psi)) * (1 - np.exp(-c8 * np.maximum(0, d_theta))) * sigmoid
+    dd_phi = -b1 * d_phi - d_psi * k1 * np.exp(-c5 * np.absolute(d_psi)) * (1 - np.exp(-c6 * np.maximum(0, d_theta))) * sigmoid
     return d_s, dd_phi
 
-def cohen_avoid3(beta, d_theta, d_psi, k1, k2, c5, c6, c7, c8):
+def cohen_avoid3(beta, d_theta, d_psi, k1, c5, c6, k2, c7, c8):
     sigmoid = 1 / (1 + np.exp(20 * (np.absolute(beta) - 1.3)))
     dd_s = k2 * np.sign(beta) * d_psi * np.exp(-c7 * np.absolute(d_psi)) * (1 - np.exp(-c8 * np.maximum(0, d_theta))) * sigmoid
     dd_phi = -k1 * d_psi * np.exp(-c5 * np.absolute(d_psi)) * (1 - np.exp(-c6 * np.maximum(0, d_theta))) * sigmoid
     return dd_s, dd_phi
     
-def cohen_avoid4(beta, d_theta, d_psi, k1, k2, c5, c6, c7, c8):
+def cohen_avoid4(beta, d_theta, d_psi, k1, c5, c6, k2, c7, c8):
     sigmoid = 1 / (1 + np.exp(20 * (np.absolute(beta) - 1.3)))
     dd_s = k2 * np.sign(beta) * np.sign(d_psi) * np.exp(-c7 * np.absolute(d_psi)) * (1 - np.exp(-c8 * np.maximum(0, d_theta))) * sigmoid
     dd_phi = -k1 * np.sign(d_psi) * np.exp(-c5 * np.absolute(d_psi)) * (1 - np.exp(-c6 * np.maximum(0, d_theta))) * sigmoid
