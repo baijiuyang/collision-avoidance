@@ -26,7 +26,7 @@ class Data:
     def add_dump(self, i_traj, err_info):
         self.dump[i_traj] = err_info
         
-    def filter(self, i_traj, order=4, cutoff=0.6):
+    def filter(self, i_traj, order, cutoff):
         '''
         Filter the data using butterwirth low pass digital foward
         and backward filter.
@@ -51,7 +51,7 @@ class Data:
         cutoff = 0.6 if 'cutoff' not in kwargs else kwargs['cutoff']
         filtered = True if 'filtered' not in kwargs else kwargs['filtered']
         if filtered:
-            return self.filter(i_traj, order=4, cutoff=0.6)
+            return self.filter(i_traj, order, cutoff)
         else:
             return self.trajs[i_traj]
             

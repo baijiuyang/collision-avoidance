@@ -49,8 +49,18 @@ def d_dist(p0, p1, v0, v1):
     else:
         return ((p1[:, 0] - p0[:, 0]) * (v1[:, 0] - v0[:, 0]) + (p1[:, 1] - p0[:, 1]) * (v1[:, 1] - v0[:, 1])) / dist(p0, p1)
 
+
+def traj_velocity(traj, Hz):
+    return gradient(traj, axis=0) * Hz
+    
 def traj_speed(traj, Hz):
-    return norm(gradient(traj, axis=0) * Hz, axis=-1)
+    return norm(traj_velocity(traj, Hz), axis=-1)
+    
+def traj_acceleration(traj, Hz):
+    return gradient(traj_velocity(traj, Hz), axis=0) * Hz
+
+def traj_a(traj, Hz):
+    return norm(traj_acceleration(traj, Hz), axis=-1)
 
 def d_speed(v, a):
     '''
@@ -562,6 +572,10 @@ def collision_trajectory(beta, side, spd1=1.3, w=1.5, r=10, r_min=0, Hz=100, ani
 def play_trajs(trajs, ws, Hz, ref=[0,1], labels=None, colors=None, interval=None, save=False):
     '''
     trajs (2-d np array)
+    
+    Args:
+            interval (float): The pause between two frames in millisecond.
+            save (bool): Flag for saving the animation in the current working directory.
     '''
     trajs = np.array(trajs)
     if not interval: interval = 1000 / Hz
